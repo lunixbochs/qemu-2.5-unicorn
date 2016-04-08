@@ -65,7 +65,7 @@ static const int tcg_target_reg_alloc_order[] = {
 
 static const int tcg_target_call_iarg_regs[] = {
 #if TCG_TARGET_REG_BITS == 64
-#if defined(_WIN64)
+#if (defined(_WIN64) || defined(__CYGWIN__))
     TCG_REG_RCX,
     TCG_REG_RDX,
 #else
@@ -121,14 +121,6 @@ static bool have_cmov;
 # define have_cmov 0
 #endif
 
-/* If bit_MOVBE is defined in cpuid.h (added in GCC version 4.6), we are
-   going to attempt to determine at runtime whether movbe is available.  */
-#if defined(CONFIG_CPUID_H) && defined(bit_MOVBE)
-static bool have_movbe;
-#else
-# define have_movbe 0
-#endif
-
 /* We need this symbol in tcg-target.h, and we can't properly conditionalize
    it there.  Therefore we always define the variable.  */
 bool have_bmi1;
@@ -136,10 +128,8 @@ bool have_bmi1;
 #if defined(CONFIG_CPUID_H) && defined(bit_BMI2)
 static bool have_bmi2;
 #else
-# define have_bmi2 0
+static bool have_bmi2 = 0;
 #endif
-
-static tcg_insn_unit *tb_ret_addr;
 
 static void patch_reloc(tcg_insn_unit *code_ptr, int type,
                         intptr_t value, intptr_t addend)
@@ -1044,8 +1034,8 @@ static void tcg_out_setcond2(TCGContext *s, const TCGArg *args,
         || (!const_args[4] && args[0] == args[4])) {
         /* When the destination overlaps with one of the argument
            registers, don't do anything tricky.  */
-        label_true = gen_new_label();
-        label_over = gen_new_label();
+        label_true = gen_new_label(s);
+        label_over = gen_new_label(s);
 
         new_args[5] = label_arg(label_true);
         tcg_out_brcond2(s, new_args, const_args+1, 1);
@@ -1063,7 +1053,7 @@ static void tcg_out_setcond2(TCGContext *s, const TCGArg *args,
 
         tcg_out_movi(s, TCG_TYPE_I32, args[0], 0);
 
-        label_over = gen_new_label();
+        label_over = gen_new_label(s);
         new_args[4] = tcg_invert_cond(new_args[4]);
         new_args[5] = label_arg(label_over);
         tcg_out_brcond2(s, new_args, const_args+1, 1);
@@ -1229,8 +1219,11 @@ static inline void tcg_out_tlb_load(TCGContext *s, TCGReg addrlo, TCGReg addrhi,
        for the 32-bit host happens with the fastpath ADDL below.  */
     tcg_out_mov(s, ttype, r1, addrlo);
 
-    /* jne slow_path */
+    // Unicorn: fast path if hookmem is not enable
+    if (!HOOK_EXISTS(s->uc, UC_HOOK_MEM_READ) && !HOOK_EXISTS(s->uc, UC_HOOK_MEM_WRITE))
     tcg_out_opc(s, OPC_JCC_long + JCC_JNE, 0, 0, 0);
+    else
+        tcg_out_opc(s, OPC_JMP_long, 0, 0, 0); /* slow_path */
     label_ptr[0] = s->code_ptr;
     s->code_ptr += 4;
 
@@ -1452,7 +1445,7 @@ static void tcg_out_qemu_ld_direct(TCGContext *s, TCGReg datalo, TCGReg datahi,
     TCGMemOp bswap = real_bswap;
     int movop = OPC_MOVL_GvEv;
 
-    if (have_movbe && real_bswap) {
+    if (s->have_movbe && real_bswap) {
         bswap = 0;
         movop = OPC_MOVBE_GyMy;
     }
@@ -1626,7 +1619,7 @@ static void tcg_out_qemu_st_direct(TCGContext *s, TCGReg datalo, TCGReg datahi,
     TCGMemOp bswap = real_bswap;
     int movop = OPC_MOVL_EvGv;
 
-    if (have_movbe && real_bswap) {
+    if (s->have_movbe && real_bswap) {
         bswap = 0;
         movop = OPC_MOVBE_MyGy;
     }
@@ -1772,7 +1765,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
     switch(opc) {
     case INDEX_op_exit_tb:
         tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_EAX, args[0]);
-        tcg_out_jmp(s, tb_ret_addr);
+        tcg_out_jmp(s, s->tb_ret_addr);
         break;
     case INDEX_op_goto_tb:
         if (s->tb_jmp_offset) {
@@ -2245,7 +2238,7 @@ static int tcg_target_callee_save_regs[] = {
 #if TCG_TARGET_REG_BITS == 64
     TCG_REG_RBP,
     TCG_REG_RBX,
-#if defined(_WIN64)
+#if (defined(_WIN64) || defined(__CYGWIN__))
     TCG_REG_RDI,
     TCG_REG_RSI,
 #endif
@@ -2308,7 +2301,7 @@ static void tcg_target_qemu_prologue(TCGContext *s)
 #endif
 
     /* TB epilogue */
-    tb_ret_addr = s->code_ptr;
+    s->tb_ret_addr = s->code_ptr;
 
     tcg_out_addi(s, TCG_REG_CALL_STACK, stack_addend);
 
@@ -2342,7 +2335,7 @@ static void tcg_target_init(TCGContext *s)
 #ifndef have_movbe
         /* MOVBE is only available on Intel Atom and Haswell CPUs, so we
            need to probe for it.  */
-        have_movbe = (c & bit_MOVBE) != 0;
+        s->have_movbe = (c & bit_MOVBE) != 0;
 #endif
     }
 
@@ -2359,105 +2352,29 @@ static void tcg_target_init(TCGContext *s)
 #endif
 
     if (TCG_TARGET_REG_BITS == 64) {
-        tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffff);
-        tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffff);
+        tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffff);
+        tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffff);
     } else {
-        tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xff);
+        tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I32], 0, 0xff);
     }
 
-    tcg_regset_clear(tcg_target_call_clobber_regs);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_EAX);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_EDX);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_ECX);
+    tcg_regset_clear(s->tcg_target_call_clobber_regs);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_EAX);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_EDX);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_ECX);
     if (TCG_TARGET_REG_BITS == 64) {
-#if !defined(_WIN64)
-        tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_RDI);
-        tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_RSI);
+#if !(defined(_WIN64) || defined(__CYGWIN__))
+        tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_RDI);
+        tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_RSI);
 #endif
-        tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R8);
-        tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R9);
-        tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R10);
-        tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R11);
+        tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R8);
+        tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R9);
+        tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R10);
+        tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R11);
     }
 
     tcg_regset_clear(s->reserved_regs);
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_CALL_STACK);
 
-    tcg_add_target_add_op_defs(x86_op_defs);
+    tcg_add_target_add_op_defs(s, x86_op_defs);
 }
-
-typedef struct {
-    DebugFrameHeader h;
-    uint8_t fde_def_cfa[4];
-    uint8_t fde_reg_ofs[14];
-} DebugFrame;
-
-/* We're expecting a 2 byte uleb128 encoded value.  */
-QEMU_BUILD_BUG_ON(FRAME_SIZE >= (1 << 14));
-
-#if !defined(__ELF__)
-    /* Host machine without ELF. */
-#elif TCG_TARGET_REG_BITS == 64
-#define ELF_HOST_MACHINE EM_X86_64
-static const DebugFrame debug_frame = {
-    .h.cie.len = sizeof(DebugFrameCIE)-4, /* length after .len member */
-    .h.cie.id = -1,
-    .h.cie.version = 1,
-    .h.cie.code_align = 1,
-    .h.cie.data_align = 0x78,             /* sleb128 -8 */
-    .h.cie.return_column = 16,
-
-    /* Total FDE size does not include the "len" member.  */
-    .h.fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, h.fde.cie_offset),
-
-    .fde_def_cfa = {
-        12, 7,                          /* DW_CFA_def_cfa %rsp, ... */
-        (FRAME_SIZE & 0x7f) | 0x80,     /* ... uleb128 FRAME_SIZE */
-        (FRAME_SIZE >> 7)
-    },
-    .fde_reg_ofs = {
-        0x90, 1,                        /* DW_CFA_offset, %rip, -8 */
-        /* The following ordering must match tcg_target_callee_save_regs.  */
-        0x86, 2,                        /* DW_CFA_offset, %rbp, -16 */
-        0x83, 3,                        /* DW_CFA_offset, %rbx, -24 */
-        0x8c, 4,                        /* DW_CFA_offset, %r12, -32 */
-        0x8d, 5,                        /* DW_CFA_offset, %r13, -40 */
-        0x8e, 6,                        /* DW_CFA_offset, %r14, -48 */
-        0x8f, 7,                        /* DW_CFA_offset, %r15, -56 */
-    }
-};
-#else
-#define ELF_HOST_MACHINE EM_386
-static const DebugFrame debug_frame = {
-    .h.cie.len = sizeof(DebugFrameCIE)-4, /* length after .len member */
-    .h.cie.id = -1,
-    .h.cie.version = 1,
-    .h.cie.code_align = 1,
-    .h.cie.data_align = 0x7c,             /* sleb128 -4 */
-    .h.cie.return_column = 8,
-
-    /* Total FDE size does not include the "len" member.  */
-    .h.fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, h.fde.cie_offset),
-
-    .fde_def_cfa = {
-        12, 4,                          /* DW_CFA_def_cfa %esp, ... */
-        (FRAME_SIZE & 0x7f) | 0x80,     /* ... uleb128 FRAME_SIZE */
-        (FRAME_SIZE >> 7)
-    },
-    .fde_reg_ofs = {
-        0x88, 1,                        /* DW_CFA_offset, %eip, -4 */
-        /* The following ordering must match tcg_target_callee_save_regs.  */
-        0x85, 2,                        /* DW_CFA_offset, %ebp, -8 */
-        0x83, 3,                        /* DW_CFA_offset, %ebx, -12 */
-        0x86, 4,                        /* DW_CFA_offset, %esi, -16 */
-        0x87, 5,                        /* DW_CFA_offset, %edi, -20 */
-    }
-};
-#endif
-
-#if defined(ELF_HOST_MACHINE)
-void tcg_register_jit(void *buf, size_t buf_size)
-{
-    tcg_register_jit_int(buf, buf_size, &debug_frame, sizeof(debug_frame));
-}
-#endif

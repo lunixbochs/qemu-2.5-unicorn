@@ -31,6 +31,8 @@
 
 #define CPU_TEMP_BUF_NLONGS 128
 
+#include "uc_priv.h"
+
 /* Default target word size to pointer size.  */
 #ifndef TCG_TARGET_REG_BITS
 # if UINTPTR_MAX == UINT32_MAX
@@ -491,6 +493,123 @@ QEMU_BUILD_BUG_ON(NB_OPS > 0xff);
 QEMU_BUILD_BUG_ON(OPC_BUF_SIZE >= 0x7fff);
 QEMU_BUILD_BUG_ON(OPPARAM_BUF_SIZE >= 0x7fff);
 
+
+/* pool based memory allocation */
+
+void *tcg_malloc_internal(TCGContext *s, int size);
+void tcg_pool_reset(TCGContext *s);
+void tcg_pool_delete(TCGContext *s);
+
+void tcg_context_init(TCGContext *s);
+void tcg_context_free(void *s);   // free memory allocated for @s
+void tcg_prologue_init(TCGContext *s);
+void tcg_func_start(TCGContext *s);
+
+int tcg_gen_code(TCGContext *s, tcg_insn_unit *gen_code_buf);
+int tcg_gen_code_search_pc(TCGContext *s, tcg_insn_unit *gen_code_buf,
+                           long offset);
+
+void tcg_set_frame(TCGContext *s, int reg, intptr_t start, intptr_t size);
+
+TCGv_i32 tcg_global_reg_new_i32(TCGContext *s, int reg, const char *name);
+TCGv_i32 tcg_global_mem_new_i32(TCGContext *s, int reg, intptr_t offset, const char *name);
+TCGv_i32 tcg_temp_new_internal_i32(TCGContext *s, int temp_local);
+static inline TCGv_i32 tcg_temp_new_i32(TCGContext *s)
+{
+    return tcg_temp_new_internal_i32(s, 0);
+}
+static inline TCGv_i32 tcg_temp_local_new_i32(TCGContext *s)
+{
+    return tcg_temp_new_internal_i32(s, 1);
+}
+void tcg_temp_free_i32(TCGContext *s, TCGv_i32 arg);
+char *tcg_get_arg_str_i32(TCGContext *s, char *buf, int buf_size, TCGv_i32 arg);
+
+TCGv_i64 tcg_global_reg_new_i64(TCGContext *s, int reg, const char *name);
+TCGv_i64 tcg_global_mem_new_i64(TCGContext *s, int reg, intptr_t offset, const char *name);
+TCGv_i64 tcg_temp_new_internal_i64(TCGContext *s, int temp_local);
+static inline TCGv_i64 tcg_temp_new_i64(TCGContext *s)
+{
+    return tcg_temp_new_internal_i64(s, 0);
+}
+static inline TCGv_i64 tcg_temp_local_new_i64(TCGContext *s)
+{
+    return tcg_temp_new_internal_i64(s, 1);
+}
+void tcg_temp_free_i64(TCGContext *s, TCGv_i64 arg);
+char *tcg_get_arg_str_i64(TCGContext *s, char *buf, int buf_size, TCGv_i64 arg);
+
+#if defined(CONFIG_DEBUG_TCG)
+/* If you call tcg_clear_temp_count() at the start of a section of
+ * code which is not supposed to leak any TCG temporaries, then
+ * calling tcg_check_temp_count() at the end of the section will
+ * return 1 if the section did in fact leak a temporary.
+ */
+void tcg_clear_temp_count(void);
+int tcg_check_temp_count(void);
+#else
+#define tcg_clear_temp_count() do { } while (0)
+#define tcg_check_temp_count() 0
+#endif
+
+void tcg_dump_info(FILE *f, fprintf_function cpu_fprintf);
+
+#define TCG_CT_ALIAS  0x80
+#define TCG_CT_IALIAS 0x40
+#define TCG_CT_REG    0x01
+#define TCG_CT_CONST  0x02 /* any constant of register size */
+
+typedef struct TCGArgConstraint {
+    uint16_t ct;
+    uint8_t alias_index;
+    union {
+        TCGRegSet regs;
+    } u;
+} TCGArgConstraint;
+
+#define TCG_MAX_OP_ARGS 16
+
+/* Bits for TCGOpDef->flags, 8 bits available.  */
+enum {
+    /* Instruction defines the end of a basic block.  */
+    TCG_OPF_BB_END       = 0x01,
+    /* Instruction clobbers call registers and potentially update globals.  */
+    TCG_OPF_CALL_CLOBBER = 0x02,
+    /* Instruction has side effects: it cannot be removed if its outputs
+       are not used, and might trigger exceptions.  */
+    TCG_OPF_SIDE_EFFECTS = 0x04,
+    /* Instruction operands are 64-bits (otherwise 32-bits).  */
+    TCG_OPF_64BIT        = 0x08,
+    /* Instruction is optional and not implemented by the host, or insn
+       is generic and should not be implemened by the host.  */
+    TCG_OPF_NOT_PRESENT  = 0x10,
+};
+
+typedef struct TCGOpDef {
+    const char *name;
+    uint8_t nb_oargs, nb_iargs, nb_cargs, nb_args;
+    uint8_t flags;
+    TCGArgConstraint *args_ct;
+    int *sorted_args;
+#if defined(CONFIG_DEBUG_TCG)
+    int used;
+#endif
+} TCGOpDef;
+
+typedef enum {
+    TCG_TEMP_UNDEF = 0,
+    TCG_TEMP_CONST,
+    TCG_TEMP_COPY,
+} tcg_temp_state;
+
+struct tcg_temp_info {
+    tcg_temp_state state;
+    uint16_t prev_copy;
+    uint16_t next_copy;
+    tcg_target_ulong val;
+    tcg_target_ulong mask;
+};
+
 struct TCGContext {
     uint8_t *pool_cur, *pool_end;
     TCGPool *pool_first, *pool_current, *pool_first_large;
@@ -944,10 +1063,8 @@ static inline unsigned get_mmuidx(TCGMemOpIdx oi)
 uintptr_t tcg_qemu_tb_exec(CPUArchState *env, uint8_t *tb_ptr);
 #else
 # define tcg_qemu_tb_exec(env, tb_ptr) \
-    ((uintptr_t (*)(void *, void *))tcg_ctx.code_gen_prologue)(env, tb_ptr)
+    ((uintptr_t (*)(void *, void *))tcg_ctx->code_gen_prologue)(env, tb_ptr)
 #endif
-
-void tcg_register_jit(void *buf, size_t buf_size);
 
 /*
  * Memory helpers that will be used by TCG generated code.
@@ -1039,6 +1156,8 @@ uint64_t helper_be_ldq_cmmu(CPUArchState *env, target_ulong addr,
 # define helper_ret_ldl_cmmu  helper_le_ldl_cmmu
 # define helper_ret_ldq_cmmu  helper_le_ldq_cmmu
 #endif
+
+void check_exit_request(TCGContext *tcg_ctx);
 
 #endif /* CONFIG_SOFTMMU */
 

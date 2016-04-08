@@ -21,7 +21,6 @@
 #include "qemu/host-utils.h"
 #include "exec/helper-proto.h"
 #include "exec/cpu_ldst.h"
-#include "sysemu/kvm.h"
 
 /*****************************************************************************/
 /* Exceptions processing helpers */
@@ -637,11 +636,11 @@ static CPUMIPSState *mips_cpu_map_tc(CPUMIPSState *env, int *tc)
     cs = CPU(mips_env_get_cpu(env));
     vpe_idx = tc_idx / cs->nr_threads;
     *tc = tc_idx % cs->nr_threads;
-    other_cs = qemu_get_cpu(vpe_idx);
+    other_cs = qemu_get_cpu(env->uc, vpe_idx);
     if (other_cs == NULL) {
         return env;
     }
-    cpu = MIPS_CPU(other_cs);
+    cpu = MIPS_CPU(env->uc, other_cs);
     return &cpu->env;
 }
 
@@ -1770,11 +1769,12 @@ target_ulong helper_emt(void)
 
 target_ulong helper_dvpe(CPUMIPSState *env)
 {
+    struct uc_struct *uc = env->uc;
     CPUState *other_cs = first_cpu;
     target_ulong prev = env->mvp->CP0_MVPControl;
 
     CPU_FOREACH(other_cs) {
-        MIPSCPU *other_cpu = MIPS_CPU(other_cs);
+        MIPSCPU *other_cpu = MIPS_CPU(uc, other_cs);
         /* Turn off all VPEs except the one executing the dvpe.  */
         if (&other_cpu->env != env) {
             other_cpu->env.mvp->CP0_MVPControl &= ~(1 << CP0MVPCo_EVP);
@@ -1786,11 +1786,12 @@ target_ulong helper_dvpe(CPUMIPSState *env)
 
 target_ulong helper_evpe(CPUMIPSState *env)
 {
+    struct uc_struct *uc = env->uc;
     CPUState *other_cs = first_cpu;
     target_ulong prev = env->mvp->CP0_MVPControl;
 
     CPU_FOREACH(other_cs) {
-        MIPSCPU *other_cpu = MIPS_CPU(other_cs);
+        MIPSCPU *other_cpu = MIPS_CPU(uc, other_cs);
 
         if (&other_cpu->env != env
             /* If the VPE is WFI, don't disturb its sleep.  */
@@ -2270,7 +2271,7 @@ void mips_cpu_do_unaligned_access(CPUState *cs, vaddr addr,
                                   int access_type, int is_user,
                                   uintptr_t retaddr)
 {
-    MIPSCPU *cpu = MIPS_CPU(cs);
+    MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
     CPUMIPSState *env = &cpu->env;
     int error_code = 0;
     int excp;
@@ -2296,7 +2297,7 @@ void tlb_fill(CPUState *cs, target_ulong addr, int is_write, int mmu_idx,
 
     ret = mips_cpu_handle_mmu_fault(cs, addr, is_write, mmu_idx);
     if (ret) {
-        MIPSCPU *cpu = MIPS_CPU(cs);
+        MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
         CPUMIPSState *env = &cpu->env;
 
         do_raise_exception_err(env, cs->exception_index,
@@ -2308,7 +2309,7 @@ void mips_cpu_unassigned_access(CPUState *cs, hwaddr addr,
                                 bool is_write, bool is_exec, int unused,
                                 unsigned size)
 {
-    MIPSCPU *cpu = MIPS_CPU(cs);
+    MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
     CPUMIPSState *env = &cpu->env;
 
     /*
@@ -2317,10 +2318,6 @@ void mips_cpu_unassigned_access(CPUState *cs, hwaddr addr,
      * Until we can trigger a bus error exception through KVM lets just ignore
      * the access.
      */
-    if (kvm_enabled()) {
-        return;
-    }
-
     if (is_exec) {
         raise_exception(env, EXCP_IBE);
     } else {

@@ -17,6 +17,8 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+/* Modified for Unicorn Engine by Nguyen Anh Quynh, 2015 */
+
 #include "config.h"
 #include "cpu.h"
 #include "exec/exec-all.h"
@@ -30,11 +32,17 @@
 #include "exec/ram_addr.h"
 #include "tcg/tcg.h"
 
+#include "uc_priv.h"
+
 //#define DEBUG_TLB
 //#define DEBUG_TLB_CHECK
 
-/* statistics */
-int tlb_flush_count;
+static void tlb_flush_entry(CPUTLBEntry *tlb_entry, target_ulong addr);
+static bool tlb_is_dirty_ram(CPUTLBEntry *tlbe);
+static bool qemu_ram_addr_from_host_nofail(struct uc_struct *uc, void *ptr, ram_addr_t *addr);
+static void tlb_add_large_page(CPUArchState *env, target_ulong vaddr,
+                               target_ulong size);
+static void tlb_set_dirty1(CPUTLBEntry *tlb_entry, target_ulong vaddr);
 
 /* NOTE:
  * If flush_global is true (the usual case), flush all tlb entries.
@@ -66,7 +74,6 @@ void tlb_flush(CPUState *cpu, int flush_global)
     env->vtlb_index = 0;
     env->tlb_flush_addr = -1;
     env->tlb_flush_mask = 0;
-    tlb_flush_count++;
 }
 
 static inline void v_tlb_flush_by_mmuidx(CPUState *cpu, va_list argp)
@@ -108,18 +115,6 @@ void tlb_flush_by_mmuidx(CPUState *cpu, ...)
     va_start(argp, cpu);
     v_tlb_flush_by_mmuidx(cpu, argp);
     va_end(argp);
-}
-
-static inline void tlb_flush_entry(CPUTLBEntry *tlb_entry, target_ulong addr)
-{
-    if (addr == (tlb_entry->addr_read &
-                 (TARGET_PAGE_MASK | TLB_INVALID_MASK)) ||
-        addr == (tlb_entry->addr_write &
-                 (TARGET_PAGE_MASK | TLB_INVALID_MASK)) ||
-        addr == (tlb_entry->addr_code &
-                 (TARGET_PAGE_MASK | TLB_INVALID_MASK))) {
-        memset(tlb_entry, -1, sizeof(*tlb_entry));
-    }
 }
 
 void tlb_flush_page(CPUState *cpu, target_ulong addr)
@@ -220,9 +215,9 @@ void tlb_flush_page_by_mmuidx(CPUState *cpu, target_ulong addr, ...)
 
 /* update the TLBs so that writes to code in the virtual page 'addr'
    can be detected */
-void tlb_protect_code(ram_addr_t ram_addr)
+void tlb_protect_code(struct uc_struct *uc, ram_addr_t ram_addr)
 {
-    cpu_physical_memory_test_and_clear_dirty(ram_addr, TARGET_PAGE_SIZE,
+    cpu_physical_memory_test_and_clear_dirty(uc, ram_addr, TARGET_PAGE_SIZE,
                                              DIRTY_MEMORY_CODE);
 }
 
@@ -230,12 +225,7 @@ void tlb_protect_code(ram_addr_t ram_addr)
    tested for self modifying code */
 void tlb_unprotect_code(ram_addr_t ram_addr)
 {
-    cpu_physical_memory_set_dirty_flag(ram_addr, DIRTY_MEMORY_CODE);
-}
-
-static bool tlb_is_dirty_ram(CPUTLBEntry *tlbe)
-{
-    return (tlbe->addr_write & (TLB_INVALID_MASK|TLB_MMIO|TLB_NOTDIRTY)) == 0;
+    cpu_physical_memory_set_dirty_flag(cpu->uc, ram_addr, DIRTY_MEMORY_CODE);
 }
 
 void tlb_reset_dirty_range(CPUTLBEntry *tlb_entry, uintptr_t start,
@@ -251,18 +241,7 @@ void tlb_reset_dirty_range(CPUTLBEntry *tlb_entry, uintptr_t start,
     }
 }
 
-static inline ram_addr_t qemu_ram_addr_from_host_nofail(void *ptr)
-{
-    ram_addr_t ram_addr;
-
-    if (qemu_ram_addr_from_host(ptr, &ram_addr) == NULL) {
-        fprintf(stderr, "Bad ram pointer %p\n", ptr);
-        abort();
-    }
-    return ram_addr;
-}
-
-void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length)
+void tlb_reset_dirty(struct uc_struct *uc, CPUState *cpu, ram_addr_t start1, ram_addr_t length)
 {
     CPUArchState *env;
 
@@ -281,13 +260,6 @@ void tlb_reset_dirty(CPUState *cpu, ram_addr_t start1, ram_addr_t length)
             tlb_reset_dirty_range(&env->tlb_v_table[mmu_idx][i],
                                   start1, length);
         }
-    }
-}
-
-static inline void tlb_set_dirty1(CPUTLBEntry *tlb_entry, target_ulong vaddr)
-{
-    if (tlb_entry->addr_write == (vaddr | TLB_NOTDIRTY)) {
-        tlb_entry->addr_write = vaddr;
     }
 }
 
@@ -313,28 +285,6 @@ void tlb_set_dirty(CPUState *cpu, target_ulong vaddr)
     }
 }
 
-/* Our TLB does not support large pages, so remember the area covered by
-   large pages and trigger a full TLB flush if these are invalidated.  */
-static void tlb_add_large_page(CPUArchState *env, target_ulong vaddr,
-                               target_ulong size)
-{
-    target_ulong mask = ~(size - 1);
-
-    if (env->tlb_flush_addr == (target_ulong)-1) {
-        env->tlb_flush_addr = vaddr & mask;
-        env->tlb_flush_mask = mask;
-        return;
-    }
-    /* Extend the existing region to include the new page.
-       This is a compromise between unnecessary flushes and the cost
-       of maintaining a full variable size TLB.  */
-    mask &= env->tlb_flush_mask;
-    while (((env->tlb_flush_addr ^ vaddr) & mask) != 0) {
-        mask <<= 1;
-    }
-    env->tlb_flush_addr &= mask;
-    env->tlb_flush_mask = mask;
-}
 
 /* Add a new TLB entry. At most one entry for a given virtual address
  * is permitted. Only a single TARGET_PAGE_SIZE region is mapped, the
@@ -415,7 +365,7 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
             /* Write access calls the I/O callback.  */
             te->addr_write = address | TLB_MMIO;
         } else if (memory_region_is_ram(section->mr)
-                   && cpu_physical_memory_is_clean(section->mr->ram_addr
+                   && cpu_physical_memory_is_clean(cpu->uc, section->mr->ram_addr
                                                    + xlat)) {
             te->addr_write = address | TLB_NOTDIRTY;
         } else {
@@ -447,6 +397,7 @@ tb_page_addr_t get_page_addr_code(CPUArchState *env1, target_ulong addr)
     int mmu_idx, page_index, pd;
     void *p;
     MemoryRegion *mr;
+    ram_addr_t  ram_addr;
     CPUState *cpu = ENV_GET_CPU(env1);
 
     page_index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
@@ -454,21 +405,86 @@ tb_page_addr_t get_page_addr_code(CPUArchState *env1, target_ulong addr)
     if (unlikely(env1->tlb_table[mmu_idx][page_index].addr_code !=
                  (addr & TARGET_PAGE_MASK))) {
         cpu_ldub_code(env1, addr);
+        // check for NX related error from softmmu
+        if (env1->invalid_error == UC_ERR_FETCH_PROT) {
+            return -1;
+        }
     }
     pd = env1->iotlb[mmu_idx][page_index].addr & ~TARGET_PAGE_MASK;
     mr = iotlb_to_region(cpu, pd);
-    if (memory_region_is_unassigned(mr)) {
-        CPUClass *cc = CPU_GET_CLASS(cpu);
 
+    if (memory_region_is_unassigned(cpu->uc, mr)) {
+        CPUClass *cc = CPU_GET_CLASS(env1->uc, cpu);
         if (cc->do_unassigned_access) {
             cc->do_unassigned_access(cpu, addr, false, true, 0, 4);
         } else {
-            cpu_abort(cpu, "Trying to execute code outside RAM or ROM at 0x"
-                      TARGET_FMT_lx "\n", addr);
+            env1->invalid_addr = addr;
+            env1->invalid_error = UC_ERR_FETCH_UNMAPPED;
+            return -1;
         }
     }
     p = (void *)((uintptr_t)addr + env1->tlb_table[mmu_idx][page_index].addend);
-    return qemu_ram_addr_from_host_nofail(p);
+    if (!qemu_ram_addr_from_host_nofail(cpu->uc, p, &ram_addr)) {
+        env1->invalid_addr = addr;
+        env1->invalid_error = UC_ERR_FETCH_UNMAPPED;
+        return -1;
+    } else
+        return ram_addr;
+}
+
+static bool qemu_ram_addr_from_host_nofail(struct uc_struct *uc, void *ptr, ram_addr_t *ram_addr)
+{
+    if (qemu_ram_addr_from_host(uc, ptr, ram_addr) == NULL) {
+        return false;
+    }
+    return true;
+}
+
+static void tlb_set_dirty1(CPUTLBEntry *tlb_entry, target_ulong vaddr)
+{
+    if (tlb_entry->addr_write == (vaddr | TLB_NOTDIRTY)) {
+        tlb_entry->addr_write = vaddr;
+    }
+}
+
+/* Our TLB does not support large pages, so remember the area covered by
+   large pages and trigger a full TLB flush if these are invalidated.  */
+static void tlb_add_large_page(CPUArchState *env, target_ulong vaddr,
+                               target_ulong size)
+{
+    target_ulong mask = ~(size - 1);
+
+    if (env->tlb_flush_addr == (target_ulong)-1) {
+        env->tlb_flush_addr = vaddr & mask;
+        env->tlb_flush_mask = mask;
+        return;
+    }
+    /* Extend the existing region to include the new page.
+       This is a compromise between unnecessary flushes and the cost
+       of maintaining a full variable size TLB.  */
+    mask &= env->tlb_flush_mask;
+    while (((env->tlb_flush_addr ^ vaddr) & mask) != 0) {
+        mask <<= 1;
+    }
+    env->tlb_flush_addr &= mask;
+    env->tlb_flush_mask = mask;
+}
+
+static bool tlb_is_dirty_ram(CPUTLBEntry *tlbe)
+{
+    return (tlbe->addr_write & (TLB_INVALID_MASK|TLB_MMIO|TLB_NOTDIRTY)) == 0;
+}
+
+static void tlb_flush_entry(CPUTLBEntry *tlb_entry, target_ulong addr)
+{
+    if (addr == (tlb_entry->addr_read &
+                 (TARGET_PAGE_MASK | TLB_INVALID_MASK)) ||
+        addr == (tlb_entry->addr_write &
+                 (TARGET_PAGE_MASK | TLB_INVALID_MASK)) ||
+        addr == (tlb_entry->addr_code &
+                 (TARGET_PAGE_MASK | TLB_INVALID_MASK))) {
+        memset(tlb_entry, -1, sizeof(*tlb_entry));
+    }
 }
 
 #define MMUSUFFIX _mmu

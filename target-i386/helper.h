@@ -1,8 +1,10 @@
+DEF_HELPER_4(uc_tracecode, void, i32, i32, ptr, i64)
+
 DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 
-DEF_HELPER_0(lock, void)
-DEF_HELPER_0(unlock, void)
+DEF_HELPER_1(lock, void, env)
+DEF_HELPER_1(unlock, void, env)
 DEF_HELPER_3(write_eflags, void, env, tl, i32)
 DEF_HELPER_1(read_eflags, tl, env)
 DEF_HELPER_2(divb_AL, void, env, tl)
@@ -48,7 +50,7 @@ DEF_HELPER_4(enter_level, void, env, int, int, tl)
 #ifdef TARGET_X86_64
 DEF_HELPER_4(enter64_level, void, env, int, int, tl)
 #endif
-DEF_HELPER_1(sysenter, void, env)
+DEF_HELPER_2(sysenter, void, env, int)
 DEF_HELPER_2(sysexit, void, env, int)
 #ifdef TARGET_X86_64
 DEF_HELPER_2(syscall, void, env, int)
@@ -192,7 +194,13 @@ DEF_HELPER_3(frstor, void, env, tl, int)
 DEF_HELPER_3(fxsave, void, env, tl, int)
 DEF_HELPER_3(fxrstor, void, env, tl, int)
 
-DEF_HELPER_FLAGS_1(clz, TCG_CALL_NO_RWG_SE, tl, tl)
+DEF_HELPER_FLAGS_1(clz_x86, TCG_CALL_NO_RWG_SE, tl, tl)
+
+#ifdef TARGET_I386
+#define helper_clz helper_clz_x86
+#define gen_helper_clz gen_helper_clz_x86
+#endif
+
 DEF_HELPER_FLAGS_1(ctz, TCG_CALL_NO_RWG_SE, tl, tl)
 DEF_HELPER_FLAGS_2(pdep, TCG_CALL_NO_RWG_SE, tl, tl, tl)
 DEF_HELPER_FLAGS_2(pext, TCG_CALL_NO_RWG_SE, tl, tl, tl)

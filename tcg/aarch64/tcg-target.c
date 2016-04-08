@@ -1272,7 +1272,7 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
 {
     /* 99% of the time, we can signal the use of extension registers
        by looking to see if the opcode handles 64-bit data.  */
-    TCGType ext = (tcg_op_defs[opc].flags & TCG_OPF_64BIT) != 0;
+    TCGType ext = (s->tcg_op_defs[opc].flags & TCG_OPF_64BIT) != 0;
 
     /* Hoist the loads of the most common arguments.  */
     TCGArg a0 = args[0];
@@ -1753,10 +1753,10 @@ static const TCGTargetOpDef aarch64_op_defs[] = {
 
 static void tcg_target_init(TCGContext *s)
 {
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffffffff);
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffffffff);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffffffff);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffffffff);
 
-    tcg_regset_set32(tcg_target_call_clobber_regs, 0,
+    tcg_regset_set32(s->tcg_target_call_clobber_regs, 0,
                      (1 << TCG_REG_X0) | (1 << TCG_REG_X1) |
                      (1 << TCG_REG_X2) | (1 << TCG_REG_X3) |
                      (1 << TCG_REG_X4) | (1 << TCG_REG_X5) |
@@ -1774,7 +1774,7 @@ static void tcg_target_init(TCGContext *s)
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_TMP);
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_X18); /* platform register */
 
-    tcg_add_target_add_op_defs(aarch64_op_defs);
+    tcg_add_target_add_op_defs(s, aarch64_op_defs);
 }
 
 /* Saving pairs: (X19, X20) .. (X27, X28), (X29(fp), X30(lr)).  */
@@ -1846,47 +1846,4 @@ static void tcg_target_qemu_prologue(TCGContext *s)
     tcg_out_insn(s, 3207, RET, TCG_REG_LR);
 }
 
-typedef struct {
-    DebugFrameHeader h;
-    uint8_t fde_def_cfa[4];
-    uint8_t fde_reg_ofs[24];
-} DebugFrame;
-
 #define ELF_HOST_MACHINE EM_AARCH64
-
-static const DebugFrame debug_frame = {
-    .h.cie.len = sizeof(DebugFrameCIE)-4, /* length after .len member */
-    .h.cie.id = -1,
-    .h.cie.version = 1,
-    .h.cie.code_align = 1,
-    .h.cie.data_align = 0x78,             /* sleb128 -8 */
-    .h.cie.return_column = TCG_REG_LR,
-
-    /* Total FDE size does not include the "len" member.  */
-    .h.fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, h.fde.cie_offset),
-
-    .fde_def_cfa = {
-        12, TCG_REG_SP,                 /* DW_CFA_def_cfa sp, ... */
-        (FRAME_SIZE & 0x7f) | 0x80,     /* ... uleb128 FRAME_SIZE */
-        (FRAME_SIZE >> 7)
-    },
-    .fde_reg_ofs = {
-        0x80 + 28, 1,                   /* DW_CFA_offset, x28,  -8 */
-        0x80 + 27, 2,                   /* DW_CFA_offset, x27, -16 */
-        0x80 + 26, 3,                   /* DW_CFA_offset, x26, -24 */
-        0x80 + 25, 4,                   /* DW_CFA_offset, x25, -32 */
-        0x80 + 24, 5,                   /* DW_CFA_offset, x24, -40 */
-        0x80 + 23, 6,                   /* DW_CFA_offset, x23, -48 */
-        0x80 + 22, 7,                   /* DW_CFA_offset, x22, -56 */
-        0x80 + 21, 8,                   /* DW_CFA_offset, x21, -64 */
-        0x80 + 20, 9,                   /* DW_CFA_offset, x20, -72 */
-        0x80 + 19, 10,                  /* DW_CFA_offset, x1p, -80 */
-        0x80 + 30, 11,                  /* DW_CFA_offset,  lr, -88 */
-        0x80 + 29, 12,                  /* DW_CFA_offset,  fp, -96 */
-    }
-};
-
-void tcg_register_jit(void *buf, size_t buf_size)
-{
-    tcg_register_jit_int(buf, buf_size, &debug_frame, sizeof(debug_frame));
-}

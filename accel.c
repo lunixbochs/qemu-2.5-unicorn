@@ -23,23 +23,27 @@
  * THE SOFTWARE.
  */
 
+/* Modified for Unicorn Engine by Nguyen Anh Quynh, 2015 */
+
 #include "sysemu/accel.h"
 #include "hw/boards.h"
 #include "qemu-common.h"
-#include "sysemu/arch_init.h"
 #include "sysemu/sysemu.h"
-#include "sysemu/kvm.h"
-#include "sysemu/qtest.h"
-#include "hw/xen/xen.h"
 #include "qom/object.h"
 #include "hw/boards.h"
 
-int tcg_tb_size;
+// use default size for TCG translated block
+#define TCG_TB_SIZE 0
+
 static bool tcg_allowed = true;
+static int tcg_init(MachineState *ms);
+static AccelClass *accel_find(struct uc_struct *uc, const char *opt_name);
+static int accel_init_machine(AccelClass *acc, MachineState *ms);
+static void tcg_accel_class_init(struct uc_struct *uc, ObjectClass *oc, void *data);
 
 static int tcg_init(MachineState *ms)
 {
-    tcg_exec_init(tcg_tb_size * 1024 * 1024);
+    ms->uc->tcg_exec_init(ms->uc, TCG_TB_SIZE * 1024 * 1024); // arch-dependent
     return 0;
 }
 
@@ -50,96 +54,6 @@ static const TypeInfo accel_type = {
     .instance_size = sizeof(AccelState),
 };
 
-/* Lookup AccelClass from opt_name. Returns NULL if not found */
-static AccelClass *accel_find(const char *opt_name)
-{
-    char *class_name = g_strdup_printf(ACCEL_CLASS_NAME("%s"), opt_name);
-    AccelClass *ac = ACCEL_CLASS(object_class_by_name(class_name));
-    g_free(class_name);
-    return ac;
-}
-
-static int accel_init_machine(AccelClass *acc, MachineState *ms)
-{
-    ObjectClass *oc = OBJECT_CLASS(acc);
-    const char *cname = object_class_get_name(oc);
-    AccelState *accel = ACCEL(object_new(cname));
-    int ret;
-    ms->accelerator = accel;
-    *(acc->allowed) = true;
-    ret = acc->init_machine(ms);
-    if (ret < 0) {
-        ms->accelerator = NULL;
-        *(acc->allowed) = false;
-        object_unref(OBJECT(accel));
-    }
-    return ret;
-}
-
-int configure_accelerator(MachineState *ms)
-{
-    const char *p;
-    char buf[10];
-    int ret;
-    bool accel_initialised = false;
-    bool init_failed = false;
-    AccelClass *acc = NULL;
-
-    p = qemu_opt_get(qemu_get_machine_opts(), "accel");
-    if (p == NULL) {
-        /* Use the default "accelerator", tcg */
-        p = "tcg";
-    }
-
-    while (!accel_initialised && *p != '\0') {
-        if (*p == ':') {
-            p++;
-        }
-        p = get_opt_name(buf, sizeof(buf), p, ':');
-        acc = accel_find(buf);
-        if (!acc) {
-            fprintf(stderr, "\"%s\" accelerator not found.\n", buf);
-            continue;
-        }
-        if (acc->available && !acc->available()) {
-            printf("%s not supported for this target\n",
-                   acc->name);
-            continue;
-        }
-        ret = accel_init_machine(acc, ms);
-        if (ret < 0) {
-            init_failed = true;
-            fprintf(stderr, "failed to initialize %s: %s\n",
-                    acc->name,
-                    strerror(-ret));
-        } else {
-            accel_initialised = true;
-        }
-    }
-
-    if (!accel_initialised) {
-        if (!init_failed) {
-            fprintf(stderr, "No accelerator found!\n");
-        }
-        exit(1);
-    }
-
-    if (init_failed) {
-        fprintf(stderr, "Back to %s accelerator.\n", acc->name);
-    }
-
-    return !accel_initialised;
-}
-
-
-static void tcg_accel_class_init(ObjectClass *oc, void *data)
-{
-    AccelClass *ac = ACCEL_CLASS(oc);
-    ac->name = "tcg";
-    ac->init_machine = tcg_init;
-    ac->allowed = &tcg_allowed;
-}
-
 #define TYPE_TCG_ACCEL ACCEL_CLASS_NAME("tcg")
 
 static const TypeInfo tcg_accel_type = {
@@ -148,10 +62,62 @@ static const TypeInfo tcg_accel_type = {
     .class_init = tcg_accel_class_init,
 };
 
-static void register_accel_types(void)
+
+int configure_accelerator(MachineState *ms)
 {
-    type_register_static(&accel_type);
-    type_register_static(&tcg_accel_type);
+    int ret;
+    bool accel_initialised = false;
+    AccelClass *acc;
+
+    acc = accel_find(ms->uc, "tcg");
+        ret = accel_init_machine(acc, ms);
+        if (ret < 0) {
+            fprintf(stderr, "failed to initialize %s: %s\n",
+                    acc->name,
+                    strerror(-ret));
+        } else {
+            accel_initialised = true;
+        }
+
+    return !accel_initialised;
 }
 
-type_init(register_accel_types);
+void register_accel_types(struct uc_struct *uc)
+{
+    type_register_static(uc, &accel_type);
+    type_register_static(uc, &tcg_accel_type);
+}
+
+static void tcg_accel_class_init(struct uc_struct *uc, ObjectClass *oc, void *data)
+{
+    AccelClass *ac = ACCEL_CLASS(uc, oc);
+    ac->name = "tcg";
+    ac->init_machine = tcg_init;
+    ac->allowed = &tcg_allowed;
+}
+
+/* Lookup AccelClass from opt_name. Returns NULL if not found */
+static AccelClass *accel_find(struct uc_struct *uc, const char *opt_name)
+{
+    char *class_name = g_strdup_printf(ACCEL_CLASS_NAME("%s"), opt_name);
+    AccelClass *ac = ACCEL_CLASS(uc, object_class_by_name(uc, class_name));
+    g_free(class_name);
+    return ac;
+}
+
+static int accel_init_machine(AccelClass *acc, MachineState *ms)
+{
+    ObjectClass *oc = OBJECT_CLASS(acc);
+    const char *cname = object_class_get_name(oc);
+    AccelState *accel = ACCEL(ms->uc, object_new(ms->uc, cname));
+    int ret;
+    ms->accelerator = accel;
+    *(acc->allowed) = true;
+    ret = acc->init_machine(ms);
+    if (ret < 0) {
+        ms->accelerator = NULL;
+        *(acc->allowed) = false;
+        object_unref(ms->uc, OBJECT(accel));
+    }
+    return ret;
+}

@@ -13,7 +13,6 @@ void qemu_set_irq(qemu_irq irq, int level);
 
 static inline void qemu_irq_raise(qemu_irq irq)
 {
-    qemu_set_irq(irq, 1);
 }
 
 static inline void qemu_irq_lower(qemu_irq irq)

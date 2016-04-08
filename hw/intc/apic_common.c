@@ -19,38 +19,31 @@
  */
 #include "hw/i386/apic.h"
 #include "hw/i386/apic_internal.h"
-#include "trace.h"
-#include "sysemu/kvm.h"
 #include "hw/qdev.h"
-#include "hw/sysbus.h"
 
-static int apic_irq_delivered;
-bool apic_report_tpr_access;
+#include "uc_priv.h"
 
-void cpu_set_apic_base(DeviceState *dev, uint64_t val)
+
+void cpu_set_apic_base(struct uc_struct *uc, DeviceState *dev, uint64_t val)
 {
-    trace_cpu_set_apic_base(val);
-
     if (dev) {
-        APICCommonState *s = APIC_COMMON(dev);
-        APICCommonClass *info = APIC_COMMON_GET_CLASS(s);
+        APICCommonState *s = APIC_COMMON(uc, dev);
+        APICCommonClass *info = APIC_COMMON_GET_CLASS(uc, s);
         info->set_base(s, val);
     }
 }
 
-uint64_t cpu_get_apic_base(DeviceState *dev)
+uint64_t cpu_get_apic_base(struct uc_struct *uc, DeviceState *dev)
 {
     if (dev) {
-        APICCommonState *s = APIC_COMMON(dev);
-        trace_cpu_get_apic_base((uint64_t)s->apicbase);
+        APICCommonState *s = APIC_COMMON(uc, dev);
         return s->apicbase;
     } else {
-        trace_cpu_get_apic_base(MSR_IA32_APICBASE_BSP);
         return MSR_IA32_APICBASE_BSP;
     }
 }
 
-void cpu_set_apic_tpr(DeviceState *dev, uint8_t val)
+void cpu_set_apic_tpr(struct uc_struct *uc, DeviceState *dev, uint8_t val)
 {
     APICCommonState *s;
     APICCommonClass *info;
@@ -59,13 +52,13 @@ void cpu_set_apic_tpr(DeviceState *dev, uint8_t val)
         return;
     }
 
-    s = APIC_COMMON(dev);
-    info = APIC_COMMON_GET_CLASS(s);
+    s = APIC_COMMON(uc, dev);
+    info = APIC_COMMON_GET_CLASS(uc, s);
 
     info->set_tpr(s, val);
 }
 
-uint8_t cpu_get_apic_tpr(DeviceState *dev)
+uint8_t cpu_get_apic_tpr(struct uc_struct *uc, DeviceState *dev)
 {
     APICCommonState *s;
     APICCommonClass *info;
@@ -74,27 +67,16 @@ uint8_t cpu_get_apic_tpr(DeviceState *dev)
         return 0;
     }
 
-    s = APIC_COMMON(dev);
-    info = APIC_COMMON_GET_CLASS(s);
+    s = APIC_COMMON(uc, dev);
+    info = APIC_COMMON_GET_CLASS(uc, s);
 
     return info->get_tpr(s);
 }
 
-void apic_enable_tpr_access_reporting(DeviceState *dev, bool enable)
+void apic_enable_vapic(struct uc_struct *uc, DeviceState *dev, hwaddr paddr)
 {
-    APICCommonState *s = APIC_COMMON(dev);
-    APICCommonClass *info = APIC_COMMON_GET_CLASS(s);
-
-    apic_report_tpr_access = enable;
-    if (info->enable_tpr_reporting) {
-        info->enable_tpr_reporting(s, enable);
-    }
-}
-
-void apic_enable_vapic(DeviceState *dev, hwaddr paddr)
-{
-    APICCommonState *s = APIC_COMMON(dev);
-    APICCommonClass *info = APIC_COMMON_GET_CLASS(s);
+    APICCommonState *s = APIC_COMMON(uc, dev);
+    APICCommonClass *info = APIC_COMMON_GET_CLASS(uc, s);
 
     s->vapic_paddr = paddr;
     info->vapic_base_update(s);
@@ -103,43 +85,9 @@ void apic_enable_vapic(DeviceState *dev, hwaddr paddr)
 void apic_handle_tpr_access_report(DeviceState *dev, target_ulong ip,
                                    TPRAccess access)
 {
-    APICCommonState *s = APIC_COMMON(dev);
+    //APICCommonState *s = APIC_COMMON(NULL, dev);
 
-    vapic_report_tpr_access(s->vapic, CPU(s->cpu), ip, access);
-}
-
-void apic_report_irq_delivered(int delivered)
-{
-    apic_irq_delivered += delivered;
-
-    trace_apic_report_irq_delivered(apic_irq_delivered);
-}
-
-void apic_reset_irq_delivered(void)
-{
-    /* Copy this into a local variable to encourage gcc to emit a plain
-     * register for a sys/sdt.h marker.  For details on this workaround, see:
-     * https://sourceware.org/bugzilla/show_bug.cgi?id=13296
-     */
-    volatile int a_i_d = apic_irq_delivered;
-    trace_apic_reset_irq_delivered(a_i_d);
-
-    apic_irq_delivered = 0;
-}
-
-int apic_get_irq_delivered(void)
-{
-    trace_apic_get_irq_delivered(apic_irq_delivered);
-
-    return apic_irq_delivered;
-}
-
-void apic_deliver_nmi(DeviceState *dev)
-{
-    APICCommonState *s = APIC_COMMON(dev);
-    APICCommonClass *info = APIC_COMMON_GET_CLASS(s);
-
-    info->external_nmi(s);
+    //vapic_report_tpr_access(s->vapic, CPU(s->cpu), ip, access);
 }
 
 bool apic_next_timer(APICCommonState *s, int64_t current_time)

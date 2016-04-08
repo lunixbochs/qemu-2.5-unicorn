@@ -90,11 +90,6 @@ typedef struct QEMU_PACKED {
     DebugFrameFDEHeader fde;
 } DebugFrameHeader;
 
-static void tcg_register_jit_int(void *buf, size_t size,
-                                 const void *debug_frame,
-                                 size_t debug_frame_size)
-    __attribute__((unused));
-
 /* Forward declarations for functions declared and used in tcg-target.c. */
 static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str);
 static void tcg_out_ld(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg1,
@@ -213,7 +208,7 @@ static void tcg_out_reloc(TCGContext *s, tcg_insn_unit *code_ptr, int type,
         patch_reloc(code_ptr, type, l->u.value, addend);
     } else {
         /* add a new relocation entry */
-        r = tcg_malloc(sizeof(TCGRelocation));
+        r = tcg_malloc(s, sizeof(TCGRelocation));
         r->type = type;
         r->ptr = code_ptr;
         r->addend = addend;
@@ -328,11 +323,15 @@ void tcg_context_init(TCGContext *s)
     memset(s, 0, sizeof(*s));
     s->nb_globals = 0;
     
+    // copy original tcg_op_defs_org for private usage
+    s->tcg_op_defs = g_malloc(sizeof(tcg_op_defs_org));
+    memcpy(s->tcg_op_defs, tcg_op_defs_org, sizeof(tcg_op_defs_org));
+
     /* Count total number of arguments and allocate the corresponding
        space */
     total_args = 0;
     for(op = 0; op < NB_OPS; op++) {
-        def = &tcg_op_defs[op];
+        def = &s->tcg_op_defs[op];
         n = def->nb_iargs + def->nb_oargs;
         total_args += n;
     }
@@ -341,7 +340,7 @@ void tcg_context_init(TCGContext *s)
     sorted_args = g_malloc(sizeof(int) * total_args);
 
     for(op = 0; op < NB_OPS; op++) {
-        def = &tcg_op_defs[op];
+        def = &s->tcg_op_defs[op];
         def->args_ct = args_ct;
         def->sorted_args = sorted_args;
         n = def->nb_iargs + def->nb_oargs;
@@ -433,7 +432,7 @@ void tcg_func_start(TCGContext *s)
     s->gen_next_op_idx = 0;
     s->gen_next_parm_idx = 0;
 
-    s->be = tcg_malloc(sizeof(TCGBackendData));
+    s->be = tcg_malloc(s, sizeof(TCGBackendData));
 }
 
 static inline void tcg_temp_alloc(TCGContext *s, int n)
@@ -442,10 +441,9 @@ static inline void tcg_temp_alloc(TCGContext *s, int n)
         tcg_abort();
 }
 
-static inline int tcg_global_reg_new_internal(TCGType type, int reg,
+static inline int tcg_global_reg_new_internal(TCGContext *s, TCGType type, int reg,
                                               const char *name)
 {
-    TCGContext *s = &tcg_ctx;
     TCGTemp *ts;
     int idx;
 
@@ -468,27 +466,26 @@ static inline int tcg_global_reg_new_internal(TCGType type, int reg,
     return idx;
 }
 
-TCGv_i32 tcg_global_reg_new_i32(int reg, const char *name)
+TCGv_i32 tcg_global_reg_new_i32(TCGContext *s, int reg, const char *name)
 {
     int idx;
 
-    idx = tcg_global_reg_new_internal(TCG_TYPE_I32, reg, name);
+    idx = tcg_global_reg_new_internal(s, TCG_TYPE_I32, reg, name);
     return MAKE_TCGV_I32(idx);
 }
 
-TCGv_i64 tcg_global_reg_new_i64(int reg, const char *name)
+TCGv_i64 tcg_global_reg_new_i64(TCGContext *s, int reg, const char *name)
 {
     int idx;
 
-    idx = tcg_global_reg_new_internal(TCG_TYPE_I64, reg, name);
+    idx = tcg_global_reg_new_internal(s, TCG_TYPE_I64, reg, name);
     return MAKE_TCGV_I64(idx);
 }
 
-static inline int tcg_global_mem_new_internal(TCGType type, int reg,
+static inline int tcg_global_mem_new_internal(TCGContext *s, TCGType type, int reg,
                                               intptr_t offset,
                                               const char *name)
 {
-    TCGContext *s = &tcg_ctx;
     TCGTemp *ts;
     int idx;
 
@@ -545,21 +542,20 @@ static inline int tcg_global_mem_new_internal(TCGType type, int reg,
     return idx;
 }
 
-TCGv_i32 tcg_global_mem_new_i32(int reg, intptr_t offset, const char *name)
+TCGv_i32 tcg_global_mem_new_i32(TCGContext *s, int reg, intptr_t offset, const char *name)
 {
-    int idx = tcg_global_mem_new_internal(TCG_TYPE_I32, reg, offset, name);
+    int idx = tcg_global_mem_new_internal(s, TCG_TYPE_I32, reg, offset, name);
     return MAKE_TCGV_I32(idx);
 }
 
-TCGv_i64 tcg_global_mem_new_i64(int reg, intptr_t offset, const char *name)
+TCGv_i64 tcg_global_mem_new_i64(TCGContext *s, int reg, intptr_t offset, const char *name)
 {
-    int idx = tcg_global_mem_new_internal(TCG_TYPE_I64, reg, offset, name);
+    int idx = tcg_global_mem_new_internal(s, TCG_TYPE_I64, reg, offset, name);
     return MAKE_TCGV_I64(idx);
 }
 
-static inline int tcg_temp_new_internal(TCGType type, int temp_local)
+static inline int tcg_temp_new_internal(TCGContext *s, TCGType type, int temp_local)
 {
-    TCGContext *s = &tcg_ctx;
     TCGTemp *ts;
     int idx, k;
 
@@ -611,25 +607,24 @@ static inline int tcg_temp_new_internal(TCGType type, int temp_local)
     return idx;
 }
 
-TCGv_i32 tcg_temp_new_internal_i32(int temp_local)
+TCGv_i32 tcg_temp_new_internal_i32(TCGContext *s, int temp_local)
 {
     int idx;
 
-    idx = tcg_temp_new_internal(TCG_TYPE_I32, temp_local);
+    idx = tcg_temp_new_internal(s, TCG_TYPE_I32, temp_local);
     return MAKE_TCGV_I32(idx);
 }
 
-TCGv_i64 tcg_temp_new_internal_i64(int temp_local)
+TCGv_i64 tcg_temp_new_internal_i64(TCGContext *s, int temp_local)
 {
     int idx;
 
-    idx = tcg_temp_new_internal(TCG_TYPE_I64, temp_local);
+    idx = tcg_temp_new_internal(s, TCG_TYPE_I64, temp_local);
     return MAKE_TCGV_I64(idx);
 }
 
-static void tcg_temp_free_internal(int idx)
+static void tcg_temp_free_internal(TCGContext *s, int idx)
 {
-    TCGContext *s = &tcg_ctx;
     TCGTemp *ts;
     int k;
 
@@ -649,58 +644,56 @@ static void tcg_temp_free_internal(int idx)
     set_bit(idx, s->free_temps[k].l);
 }
 
-void tcg_temp_free_i32(TCGv_i32 arg)
+void tcg_temp_free_i32(TCGContext *s, TCGv_i32 arg)
 {
-    tcg_temp_free_internal(GET_TCGV_I32(arg));
+    tcg_temp_free_internal(s, GET_TCGV_I32(arg));
 }
 
-void tcg_temp_free_i64(TCGv_i64 arg)
+void tcg_temp_free_i64(TCGContext *s, TCGv_i64 arg)
 {
-    tcg_temp_free_internal(GET_TCGV_I64(arg));
+    tcg_temp_free_internal(s, GET_TCGV_I64(arg));
 }
 
-TCGv_i32 tcg_const_i32(int32_t val)
+TCGv_i32 tcg_const_i32(TCGContext *s, int32_t val)
 {
     TCGv_i32 t0;
-    t0 = tcg_temp_new_i32();
-    tcg_gen_movi_i32(t0, val);
+    t0 = tcg_temp_new_i32(s);
+    tcg_gen_movi_i32(s, t0, val);
     return t0;
 }
 
-TCGv_i64 tcg_const_i64(int64_t val)
+TCGv_i64 tcg_const_i64(TCGContext *s, int64_t val)
 {
     TCGv_i64 t0;
-    t0 = tcg_temp_new_i64();
-    tcg_gen_movi_i64(t0, val);
+    t0 = tcg_temp_new_i64(s);
+    tcg_gen_movi_i64(s, t0, val);
     return t0;
 }
 
-TCGv_i32 tcg_const_local_i32(int32_t val)
+TCGv_i32 tcg_const_local_i32(TCGContext *s, int32_t val)
 {
     TCGv_i32 t0;
-    t0 = tcg_temp_local_new_i32();
-    tcg_gen_movi_i32(t0, val);
+    t0 = tcg_temp_local_new_i32(s);
+    tcg_gen_movi_i32(s, t0, val);
     return t0;
 }
 
-TCGv_i64 tcg_const_local_i64(int64_t val)
+TCGv_i64 tcg_const_local_i64(TCGContext *s, int64_t val)
 {
     TCGv_i64 t0;
-    t0 = tcg_temp_local_new_i64();
-    tcg_gen_movi_i64(t0, val);
+    t0 = tcg_temp_local_new_i64(s);
+    tcg_gen_movi_i64(s, t0, val);
     return t0;
 }
 
 #if defined(CONFIG_DEBUG_TCG)
-void tcg_clear_temp_count(void)
+void tcg_clear_temp_count(TCGContext *s)
 {
-    TCGContext *s = &tcg_ctx;
     s->temps_in_use = 0;
 }
 
-int tcg_check_temp_count(void)
+int tcg_check_temp_count(TCGContext *s)
 {
-    TCGContext *s = &tcg_ctx;
     if (s->temps_in_use) {
         /* Clear the count so that we don't give another
          * warning immediately next time around.
@@ -760,7 +753,7 @@ void tcg_gen_callN(TCGContext *s, void *func, TCGArg ret,
         int is_64bit = sizemask & (1 << (i+1)*2);
         int is_signed = sizemask & (2 << (i+1)*2);
         if (!is_64bit) {
-            TCGv_i64 temp = tcg_temp_new_i64();
+            TCGv_i64 temp = tcg_temp_new_i64(s);
             TCGv_i64 orig = MAKE_TCGV_I64(args[i]);
             if (is_signed) {
                 tcg_gen_ext32s_i64(temp, orig);
@@ -1035,11 +1028,11 @@ void tcg_dump_ops(TCGContext *s)
             nb_cargs = def->nb_cargs;
 
             /* function name, flags, out args */
-            qemu_log(" %s %s,$0x%" TCG_PRIlx ",$%d", def->name,
+            printf(" %s %s,$0x%" TCG_PRIlx ",$%d", def->name,
                      tcg_find_helper(s, args[nb_oargs + nb_iargs]),
                      args[nb_oargs + nb_iargs + 1], nb_oargs);
             for (i = 0; i < nb_oargs; i++) {
-                qemu_log(",%s", tcg_get_arg_str_idx(s, buf, sizeof(buf),
+                printf(",%s", tcg_get_arg_str_idx(s, buf, sizeof(buf),
                                                    args[i]));
             }
             for (i = 0; i < nb_iargs; i++) {
@@ -1082,9 +1075,9 @@ void tcg_dump_ops(TCGContext *s)
             case INDEX_op_setcond_i64:
             case INDEX_op_movcond_i64:
                 if (args[k] < ARRAY_SIZE(cond_name) && cond_name[args[k]]) {
-                    qemu_log(",%s", cond_name[args[k++]]);
+                    printf(",%s", cond_name[args[k++]]);
                 } else {
-                    qemu_log(",$0x%" TCG_PRIlx, args[k++]);
+                    printf(",$0x%" TCG_PRIlx, args[k++]);
                 }
                 i = 1;
                 break;
@@ -1182,7 +1175,7 @@ static void sort_constraints(TCGOpDef *def, int start, int n)
     }
 }
 
-void tcg_add_target_add_op_defs(const TCGTargetOpDef *tdefs)
+void tcg_add_target_add_op_defs(TCGContext *s, const TCGTargetOpDef *tdefs)
 {
     TCGOpcode op;
     TCGOpDef *def;
@@ -1194,7 +1187,7 @@ void tcg_add_target_add_op_defs(const TCGTargetOpDef *tdefs)
             break;
         op = tdefs->op;
         assert((unsigned)op < NB_OPS);
-        def = &tcg_op_defs[op];
+        def = &s->tcg_op_defs[op];
 #if defined(CONFIG_DEBUG_TCG)
         /* Duplicate entry in op definitions? */
         assert(!def->used);
@@ -1325,6 +1318,18 @@ static inline void tcg_la_bb_end(TCGContext *s, uint8_t *dead_temps,
     int i;
 
     memset(dead_temps, 1, s->nb_temps);
+    memset(mem_temps, 1, s->nb_globals);
+    for(i = s->nb_globals; i < s->nb_temps; i++) {
+        mem_temps[i] = s->temps[i].temp_local;
+    }
+}
+
+/*
+    Unicorn: for brcond, we should refresh liveness states for TCG globals
+*/
+static inline void tcg_la_br_end(TCGContext *s, uint8_t *mem_temps)
+{
+    int i;
     memset(mem_temps, 1, s->nb_globals);
     for(i = s->nb_globals; i < s->nb_temps; i++) {
         mem_temps[i] = s->temps[i].temp_local;
@@ -1550,7 +1555,19 @@ static void tcg_liveness_analysis(TCGContext *s)
 
                 /* if end of basic block, update */
                 if (def->flags & TCG_OPF_BB_END) {
+                    // Unicorn: do not optimize dead temps on brcond,
+                    // this causes problem because check_exit_request() inserts
+                    // brcond instruction in the middle of the TB,
+                    // which incorrectly flags end-of-block
+                    if (op != INDEX_op_brcond_i32)
                     tcg_la_bb_end(s, dead_temps, mem_temps);
+                    // Unicorn: we do not touch dead temps for brcond,
+                    // but we should refresh TCG globals In-Memory states,
+                    // otherwise, important CPU states(especially conditional flags) might be forgotten,
+                    // result in wrongly generated host code that run into wrong branch.
+                    // Refer to https://github.com/unicorn-engine/unicorn/issues/287 for further information
+                    else
+                        tcg_la_br_end(s, mem_temps);
                 } else if (def->flags & TCG_OPF_SIDE_EFFECTS) {
                     /* globals should be synced to memory */
                     memset(mem_temps, 1, s->nb_globals);
@@ -1582,9 +1599,9 @@ static void tcg_liveness_analysis(TCGContext *s)
     int nb_ops;
     nb_ops = s->gen_opc_ptr - s->gen_opc_buf;
 
-    s->op_dead_args = tcg_malloc(nb_ops * sizeof(uint16_t));
+    s->op_dead_args = tcg_malloc(s, nb_ops * sizeof(uint16_t));
     memset(s->op_dead_args, 0, nb_ops * sizeof(uint16_t));
-    s->op_sync_args = tcg_malloc(nb_ops * sizeof(uint8_t));
+    s->op_sync_args = tcg_malloc(s, nb_ops * sizeof(uint8_t));
     memset(s->op_sync_args, 0, nb_ops * sizeof(uint8_t));
 }
 #endif
@@ -1768,7 +1785,7 @@ static inline void temp_sync(TCGContext *s, int temp, TCGRegSet allocated_regs)
     if (!ts->fixed_reg) {
         switch(ts->val_type) {
         case TEMP_VAL_CONST:
-            ts->reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type],
+            ts->reg = tcg_reg_alloc(s, s->tcg_target_available_regs[ts->type],
                                     allocated_regs);
             ts->val_type = TEMP_VAL_REG;
             s->reg_to_temp[ts->reg] = temp;
@@ -1961,7 +1978,7 @@ static void tcg_reg_alloc_mov(TCGContext *s, const TCGOpDef *def,
                 /* When allocating a new register, make sure to not spill the
                    input one. */
                 tcg_regset_set_reg(allocated_regs, ts->reg);
-                ots->reg = tcg_reg_alloc(s, tcg_target_available_regs[otype],
+                ots->reg = tcg_reg_alloc(s, s->tcg_target_available_regs[otype],
                                          allocated_regs);
             }
             tcg_out_mov(s, otype, ots->reg, ts->reg);
@@ -2081,7 +2098,7 @@ static void tcg_reg_alloc_op(TCGContext *s,
         if (def->flags & TCG_OPF_CALL_CLOBBER) {
             /* XXX: permit generic clobber register list ? */ 
             for(reg = 0; reg < TCG_TARGET_NB_REGS; reg++) {
-                if (tcg_regset_test_reg(tcg_target_call_clobber_regs, reg)) {
+                if (tcg_regset_test_reg(s->tcg_target_call_clobber_regs, reg)) {
                     tcg_reg_free(s, reg);
                 }
             }
@@ -2196,13 +2213,13 @@ static void tcg_reg_alloc_call(TCGContext *s, int nb_oargs, int nb_iargs,
             if (ts->val_type == TEMP_VAL_REG) {
                 tcg_out_st(s, ts->type, ts->reg, TCG_REG_CALL_STACK, stack_offset);
             } else if (ts->val_type == TEMP_VAL_MEM) {
-                reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type], 
+                reg = tcg_reg_alloc(s, s->tcg_target_available_regs[ts->type],
                                     s->reserved_regs);
                 /* XXX: not correct if reading values from the stack */
                 tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
                 tcg_out_st(s, ts->type, reg, TCG_REG_CALL_STACK, stack_offset);
             } else if (ts->val_type == TEMP_VAL_CONST) {
-                reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type], 
+                reg = tcg_reg_alloc(s, s->tcg_target_available_regs[ts->type],
                                     s->reserved_regs);
                 /* XXX: sign extend may be needed on some targets */
                 tcg_out_movi(s, ts->type, reg, ts->val);
@@ -2249,7 +2266,7 @@ static void tcg_reg_alloc_call(TCGContext *s, int nb_oargs, int nb_iargs,
     
     /* clobber call registers */
     for(reg = 0; reg < TCG_TARGET_NB_REGS; reg++) {
-        if (tcg_regset_test_reg(tcg_target_call_clobber_regs, reg)) {
+        if (tcg_regset_test_reg(s->tcg_target_call_clobber_regs, reg)) {
             tcg_reg_free(s, reg);
         }
     }
@@ -2316,7 +2333,7 @@ void tcg_dump_op_count(FILE *f, fprintf_function cpu_fprintf)
 #endif
 
 
-int tcg_gen_code(TCGContext *s, tcg_insn_unit *gen_code_buf)
+int tcg_gen_code(TCGContext *s, tcg_insn_unit *gen_code_buf)    // qq
 {
     int i, oi, oi_next, num_insns;
 
@@ -2466,6 +2483,7 @@ int tcg_gen_code(TCGContext *s, tcg_insn_unit *gen_code_buf)
 #ifdef CONFIG_PROFILER
 void tcg_dump_info(FILE *f, fprintf_function cpu_fprintf)
 {
+#if 0
     TCGContext *s = &tcg_ctx;
     int64_t tb_count = s->tb_count;
     int64_t tb_div_count = tb_count ? tb_count : 1;
@@ -2519,274 +2537,3 @@ void tcg_dump_info(FILE *f, fprintf_function cpu_fprintf)
     cpu_fprintf(f, "[TCG profiler not compiled]\n");
 }
 #endif
-
-#ifdef ELF_HOST_MACHINE
-/* In order to use this feature, the backend needs to do three things:
-
-   (1) Define ELF_HOST_MACHINE to indicate both what value to
-       put into the ELF image and to indicate support for the feature.
-
-   (2) Define tcg_register_jit.  This should create a buffer containing
-       the contents of a .debug_frame section that describes the post-
-       prologue unwind info for the tcg machine.
-
-   (3) Call tcg_register_jit_int, with the constructed .debug_frame.
-*/
-
-/* Begin GDB interface.  THE FOLLOWING MUST MATCH GDB DOCS.  */
-typedef enum {
-    JIT_NOACTION = 0,
-    JIT_REGISTER_FN,
-    JIT_UNREGISTER_FN
-} jit_actions_t;
-
-struct jit_code_entry {
-    struct jit_code_entry *next_entry;
-    struct jit_code_entry *prev_entry;
-    const void *symfile_addr;
-    uint64_t symfile_size;
-};
-
-struct jit_descriptor {
-    uint32_t version;
-    uint32_t action_flag;
-    struct jit_code_entry *relevant_entry;
-    struct jit_code_entry *first_entry;
-};
-
-void __jit_debug_register_code(void) __attribute__((noinline));
-void __jit_debug_register_code(void)
-{
-    asm("");
-}
-
-/* Must statically initialize the version, because GDB may check
-   the version before we can set it.  */
-struct jit_descriptor __jit_debug_descriptor = { 1, 0, 0, 0 };
-
-/* End GDB interface.  */
-
-static int find_string(const char *strtab, const char *str)
-{
-    const char *p = strtab + 1;
-
-    while (1) {
-        if (strcmp(p, str) == 0) {
-            return p - strtab;
-        }
-        p += strlen(p) + 1;
-    }
-}
-
-static void tcg_register_jit_int(void *buf_ptr, size_t buf_size,
-                                 const void *debug_frame,
-                                 size_t debug_frame_size)
-{
-    struct __attribute__((packed)) DebugInfo {
-        uint32_t  len;
-        uint16_t  version;
-        uint32_t  abbrev;
-        uint8_t   ptr_size;
-        uint8_t   cu_die;
-        uint16_t  cu_lang;
-        uintptr_t cu_low_pc;
-        uintptr_t cu_high_pc;
-        uint8_t   fn_die;
-        char      fn_name[16];
-        uintptr_t fn_low_pc;
-        uintptr_t fn_high_pc;
-        uint8_t   cu_eoc;
-    };
-
-    struct ElfImage {
-        ElfW(Ehdr) ehdr;
-        ElfW(Phdr) phdr;
-        ElfW(Shdr) shdr[7];
-        ElfW(Sym)  sym[2];
-        struct DebugInfo di;
-        uint8_t    da[24];
-        char       str[80];
-    };
-
-    struct ElfImage *img;
-
-    static const struct ElfImage img_template = {
-        .ehdr = {
-            .e_ident[EI_MAG0] = ELFMAG0,
-            .e_ident[EI_MAG1] = ELFMAG1,
-            .e_ident[EI_MAG2] = ELFMAG2,
-            .e_ident[EI_MAG3] = ELFMAG3,
-            .e_ident[EI_CLASS] = ELF_CLASS,
-            .e_ident[EI_DATA] = ELF_DATA,
-            .e_ident[EI_VERSION] = EV_CURRENT,
-            .e_type = ET_EXEC,
-            .e_machine = ELF_HOST_MACHINE,
-            .e_version = EV_CURRENT,
-            .e_phoff = offsetof(struct ElfImage, phdr),
-            .e_shoff = offsetof(struct ElfImage, shdr),
-            .e_ehsize = sizeof(ElfW(Shdr)),
-            .e_phentsize = sizeof(ElfW(Phdr)),
-            .e_phnum = 1,
-            .e_shentsize = sizeof(ElfW(Shdr)),
-            .e_shnum = ARRAY_SIZE(img->shdr),
-            .e_shstrndx = ARRAY_SIZE(img->shdr) - 1,
-#ifdef ELF_HOST_FLAGS
-            .e_flags = ELF_HOST_FLAGS,
-#endif
-#ifdef ELF_OSABI
-            .e_ident[EI_OSABI] = ELF_OSABI,
-#endif
-        },
-        .phdr = {
-            .p_type = PT_LOAD,
-            .p_flags = PF_X,
-        },
-        .shdr = {
-            [0] = { .sh_type = SHT_NULL },
-            /* Trick: The contents of code_gen_buffer are not present in
-               this fake ELF file; that got allocated elsewhere.  Therefore
-               we mark .text as SHT_NOBITS (similar to .bss) so that readers
-               will not look for contents.  We can record any address.  */
-            [1] = { /* .text */
-                .sh_type = SHT_NOBITS,
-                .sh_flags = SHF_EXECINSTR | SHF_ALLOC,
-            },
-            [2] = { /* .debug_info */
-                .sh_type = SHT_PROGBITS,
-                .sh_offset = offsetof(struct ElfImage, di),
-                .sh_size = sizeof(struct DebugInfo),
-            },
-            [3] = { /* .debug_abbrev */
-                .sh_type = SHT_PROGBITS,
-                .sh_offset = offsetof(struct ElfImage, da),
-                .sh_size = sizeof(img->da),
-            },
-            [4] = { /* .debug_frame */
-                .sh_type = SHT_PROGBITS,
-                .sh_offset = sizeof(struct ElfImage),
-            },
-            [5] = { /* .symtab */
-                .sh_type = SHT_SYMTAB,
-                .sh_offset = offsetof(struct ElfImage, sym),
-                .sh_size = sizeof(img->sym),
-                .sh_info = 1,
-                .sh_link = ARRAY_SIZE(img->shdr) - 1,
-                .sh_entsize = sizeof(ElfW(Sym)),
-            },
-            [6] = { /* .strtab */
-                .sh_type = SHT_STRTAB,
-                .sh_offset = offsetof(struct ElfImage, str),
-                .sh_size = sizeof(img->str),
-            }
-        },
-        .sym = {
-            [1] = { /* code_gen_buffer */
-                .st_info = ELF_ST_INFO(STB_GLOBAL, STT_FUNC),
-                .st_shndx = 1,
-            }
-        },
-        .di = {
-            .len = sizeof(struct DebugInfo) - 4,
-            .version = 2,
-            .ptr_size = sizeof(void *),
-            .cu_die = 1,
-            .cu_lang = 0x8001,  /* DW_LANG_Mips_Assembler */
-            .fn_die = 2,
-            .fn_name = "code_gen_buffer"
-        },
-        .da = {
-            1,          /* abbrev number (the cu) */
-            0x11, 1,    /* DW_TAG_compile_unit, has children */
-            0x13, 0x5,  /* DW_AT_language, DW_FORM_data2 */
-            0x11, 0x1,  /* DW_AT_low_pc, DW_FORM_addr */
-            0x12, 0x1,  /* DW_AT_high_pc, DW_FORM_addr */
-            0, 0,       /* end of abbrev */
-            2,          /* abbrev number (the fn) */
-            0x2e, 0,    /* DW_TAG_subprogram, no children */
-            0x3, 0x8,   /* DW_AT_name, DW_FORM_string */
-            0x11, 0x1,  /* DW_AT_low_pc, DW_FORM_addr */
-            0x12, 0x1,  /* DW_AT_high_pc, DW_FORM_addr */
-            0, 0,       /* end of abbrev */
-            0           /* no more abbrev */
-        },
-        .str = "\0" ".text\0" ".debug_info\0" ".debug_abbrev\0"
-               ".debug_frame\0" ".symtab\0" ".strtab\0" "code_gen_buffer",
-    };
-
-    /* We only need a single jit entry; statically allocate it.  */
-    static struct jit_code_entry one_entry;
-
-    uintptr_t buf = (uintptr_t)buf_ptr;
-    size_t img_size = sizeof(struct ElfImage) + debug_frame_size;
-    DebugFrameHeader *dfh;
-
-    img = g_malloc(img_size);
-    *img = img_template;
-
-    img->phdr.p_vaddr = buf;
-    img->phdr.p_paddr = buf;
-    img->phdr.p_memsz = buf_size;
-
-    img->shdr[1].sh_name = find_string(img->str, ".text");
-    img->shdr[1].sh_addr = buf;
-    img->shdr[1].sh_size = buf_size;
-
-    img->shdr[2].sh_name = find_string(img->str, ".debug_info");
-    img->shdr[3].sh_name = find_string(img->str, ".debug_abbrev");
-
-    img->shdr[4].sh_name = find_string(img->str, ".debug_frame");
-    img->shdr[4].sh_size = debug_frame_size;
-
-    img->shdr[5].sh_name = find_string(img->str, ".symtab");
-    img->shdr[6].sh_name = find_string(img->str, ".strtab");
-
-    img->sym[1].st_name = find_string(img->str, "code_gen_buffer");
-    img->sym[1].st_value = buf;
-    img->sym[1].st_size = buf_size;
-
-    img->di.cu_low_pc = buf;
-    img->di.cu_high_pc = buf + buf_size;
-    img->di.fn_low_pc = buf;
-    img->di.fn_high_pc = buf + buf_size;
-
-    dfh = (DebugFrameHeader *)(img + 1);
-    memcpy(dfh, debug_frame, debug_frame_size);
-    dfh->fde.func_start = buf;
-    dfh->fde.func_len = buf_size;
-
-#ifdef DEBUG_JIT
-    /* Enable this block to be able to debug the ELF image file creation.
-       One can use readelf, objdump, or other inspection utilities.  */
-    {
-        FILE *f = fopen("/tmp/qemu.jit", "w+b");
-        if (f) {
-            if (fwrite(img, img_size, 1, f) != img_size) {
-                /* Avoid stupid unused return value warning for fwrite.  */
-            }
-            fclose(f);
-        }
-    }
-#endif
-
-    one_entry.symfile_addr = img;
-    one_entry.symfile_size = img_size;
-
-    __jit_debug_descriptor.action_flag = JIT_REGISTER_FN;
-    __jit_debug_descriptor.relevant_entry = &one_entry;
-    __jit_debug_descriptor.first_entry = &one_entry;
-    __jit_debug_register_code();
-}
-#else
-/* No support for the feature.  Provide the entry point expected by exec.c,
-   and implement the internal function we declared earlier.  */
-
-static void tcg_register_jit_int(void *buf, size_t size,
-                                 const void *debug_frame,
-                                 size_t debug_frame_size)
-{
-}
-
-void tcg_register_jit(void *buf, size_t buf_size)
-{
-}
-#endif /* ELF_HOST_MACHINE */

@@ -13,13 +13,14 @@
  * GNU GPL, version 2 or (at your option) any later version.
  */
 
+/* Modified for Unicorn Engine by Nguyen Anh Quynh, 2015 */
+
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
 #include "exec/ioport.h"
 #include "qapi/visitor.h"
 #include "qemu/bitops.h"
 #include "qom/object.h"
-#include "trace.h"
 #include <assert.h>
 
 #include "exec/memory-internal.h"
@@ -30,16 +31,89 @@
 
 #define RAM_ADDR_INVALID (~(ram_addr_t)0)
 
-static unsigned memory_region_transaction_depth;
-static bool memory_region_update_pending;
-static bool ioeventfd_update_pending;
-static bool global_dirty_log = false;
 
-static QTAILQ_HEAD(memory_listeners, MemoryListener) memory_listeners
-    = QTAILQ_HEAD_INITIALIZER(memory_listeners);
+// Unicorn engine
+MemoryRegion *memory_map(struct uc_struct *uc, ram_addr_t begin, size_t size, uint32_t perms)
+{
+    MemoryRegion *ram = g_new(MemoryRegion, 1);
 
-static QTAILQ_HEAD(, AddressSpace) address_spaces
-    = QTAILQ_HEAD_INITIALIZER(address_spaces);
+    memory_region_init_ram(uc, ram, NULL, "pc.ram", size, perms, &error_abort);
+    if (ram->ram_addr == -1)
+        // out of memory
+        return NULL;
+
+    memory_region_add_subregion(get_system_memory(uc), begin, ram);
+
+    if (uc->current_cpu)
+        tlb_flush(uc->current_cpu, 1);
+
+    return ram;
+}
+
+MemoryRegion *memory_map_ptr(struct uc_struct *uc, ram_addr_t begin, size_t size, uint32_t perms, void *ptr)
+{
+    MemoryRegion *ram = g_new(MemoryRegion, 1);
+
+    memory_region_init_ram_ptr(uc, ram, NULL, "pc.ram", size, ptr);
+    ram->perms = perms;
+    if (ram->ram_addr == -1)
+        // out of memory
+        return NULL;
+
+    memory_region_add_subregion(get_system_memory(uc), begin, ram);
+
+    if (uc->current_cpu)
+        tlb_flush(uc->current_cpu, 1);
+
+    return ram;
+}
+
+void memory_unmap(struct uc_struct *uc, MemoryRegion *mr)
+{
+    int i;
+    target_ulong addr;
+
+    // Make sure all pages associated with the MemoryRegion are flushed
+    // Only need to do this if we are in a running state
+    if (uc->current_cpu) {
+        for (addr = mr->addr; addr < mr->end; addr += uc->target_page_size) {
+           tlb_flush_page(uc->current_cpu, addr);
+        }
+    }
+    mr->enabled = false;
+    memory_region_del_subregion(get_system_memory(uc), mr);
+
+    for (i = 0; i < uc->mapped_block_count; i++) {
+        if (uc->mapped_blocks[i] == mr) {
+            uc->mapped_block_count--;
+            //shift remainder of array down over deleted pointer
+            memmove(&uc->mapped_blocks[i], &uc->mapped_blocks[i + 1], sizeof(MemoryRegion*) * (uc->mapped_block_count - i));
+            mr->destructor(mr);
+            g_free((char *)mr->name);
+            g_free(mr->ioeventfds);
+            break;
+        }
+    }
+}
+
+int memory_free(struct uc_struct *uc)
+{
+    MemoryRegion *mr;
+    int i;
+
+    get_system_memory(uc)->enabled = false;
+    for (i = 0; i < uc->mapped_block_count; i++) {
+        mr = uc->mapped_blocks[i];
+        mr->enabled = false;
+        memory_region_del_subregion(get_system_memory(uc), mr);
+        mr->destructor(mr);
+        g_free((char *)mr->name);
+        g_free(mr->ioeventfds);
+        g_free(mr);
+    }
+
+    return 0;
+}
 
 typedef struct AddrRange AddrRange;
 
@@ -107,14 +181,14 @@ static bool memory_listener_match(MemoryListener *listener,
                                                                         \
         switch (_direction) {                                           \
         case Forward:                                                   \
-            QTAILQ_FOREACH(_listener, &memory_listeners, link) {        \
+            QTAILQ_FOREACH(_listener, &uc->memory_listeners, link) {        \
                 if (_listener->_callback) {                             \
                     _listener->_callback(_listener, ##_args);           \
                 }                                                       \
             }                                                           \
             break;                                                      \
         case Reverse:                                                   \
-            QTAILQ_FOREACH_REVERSE(_listener, &memory_listeners,        \
+            QTAILQ_FOREACH_REVERSE(_listener, &uc->memory_listeners,        \
                                    memory_listeners, link) {            \
                 if (_listener->_callback) {                             \
                     _listener->_callback(_listener, ##_args);           \
@@ -132,7 +206,7 @@ static bool memory_listener_match(MemoryListener *listener,
                                                                         \
         switch (_direction) {                                           \
         case Forward:                                                   \
-            QTAILQ_FOREACH(_listener, &memory_listeners, link) {        \
+            QTAILQ_FOREACH(_listener, &uc->memory_listeners, link) {        \
                 if (_listener->_callback                                \
                     && memory_listener_match(_listener, _section)) {    \
                     _listener->_callback(_listener, _section, ##_args); \
@@ -140,7 +214,7 @@ static bool memory_listener_match(MemoryListener *listener,
             }                                                           \
             break;                                                      \
         case Reverse:                                                   \
-            QTAILQ_FOREACH_REVERSE(_listener, &memory_listeners,        \
+            QTAILQ_FOREACH_REVERSE(_listener, &uc->memory_listeners,        \
                                    memory_listeners, link) {            \
                 if (_listener->_callback                                \
                     && memory_listener_match(_listener, _section)) {    \
@@ -221,7 +295,6 @@ struct FlatRange {
     MemoryRegion *mr;
     hwaddr offset_in_region;
     AddrRange addr;
-    uint8_t dirty_log_mask;
     bool romd_mode;
     bool readonly;
 };
@@ -306,7 +379,6 @@ static bool can_merge(FlatRange *r1, FlatRange *r2)
         && int128_eq(int128_add(int128_make64(r1->offset_in_region),
                                 r1->addr.size),
                      int128_make64(r2->offset_in_region))
-        && r1->dirty_log_mask == r2->dirty_log_mask
         && r1->romd_mode == r2->romd_mode
         && r1->readonly == r2->readonly;
 }
@@ -381,7 +453,6 @@ static MemTxResult memory_region_oldmmio_read_accessor(MemoryRegion *mr,
     uint64_t tmp;
 
     tmp = mr->ops->old_mmio.read[ctz32(size)](mr->opaque, addr);
-    trace_memory_region_ops_read(mr, addr, tmp, size);
     *value |= (tmp & mask) << shift;
     return MEMTX_OK;
 }
@@ -396,8 +467,7 @@ static MemTxResult  memory_region_read_accessor(MemoryRegion *mr,
 {
     uint64_t tmp;
 
-    tmp = mr->ops->read(mr->opaque, addr, size);
-    trace_memory_region_ops_read(mr, addr, tmp, size);
+    tmp = mr->ops->read(mr->uc, mr->opaque, addr, size);
     *value |= (tmp & mask) << shift;
     return MEMTX_OK;
 }
@@ -413,8 +483,7 @@ static MemTxResult memory_region_read_with_attrs_accessor(MemoryRegion *mr,
     uint64_t tmp = 0;
     MemTxResult r;
 
-    r = mr->ops->read_with_attrs(mr->opaque, addr, &tmp, size, attrs);
-    trace_memory_region_ops_read(mr, addr, tmp, size);
+    r = mr->ops->read_with_attrs(mr->uc, mr->opaque, addr, &tmp, size, attrs);
     *value |= (tmp & mask) << shift;
     return r;
 }
@@ -430,7 +499,6 @@ static MemTxResult memory_region_oldmmio_write_accessor(MemoryRegion *mr,
     uint64_t tmp;
 
     tmp = (*value >> shift) & mask;
-    trace_memory_region_ops_write(mr, addr, tmp, size);
     mr->ops->old_mmio.write[ctz32(size)](mr->opaque, addr, tmp);
     return MEMTX_OK;
 }
@@ -446,8 +514,7 @@ static MemTxResult memory_region_write_accessor(MemoryRegion *mr,
     uint64_t tmp;
 
     tmp = (*value >> shift) & mask;
-    trace_memory_region_ops_write(mr, addr, tmp, size);
-    mr->ops->write(mr->opaque, addr, tmp, size);
+    mr->ops->write(mc->uc, mr->opaque, addr, tmp, size);
     return MEMTX_OK;
 }
 
@@ -462,8 +529,7 @@ static MemTxResult memory_region_write_with_attrs_accessor(MemoryRegion *mr,
     uint64_t tmp;
 
     tmp = (*value >> shift) & mask;
-    trace_memory_region_ops_write(mr, addr, tmp, size);
-    return mr->ops->write_with_attrs(mr->opaque, addr, tmp, size, attrs);
+    return mr->ops->write_with_attrs(mr->uc, mr->opaque, addr, tmp, size, attrs);
 }
 
 static MemTxResult access_with_adjusted_size(hwaddr addr,
@@ -517,7 +583,7 @@ static AddressSpace *memory_region_to_address_space(MemoryRegion *mr)
     while (mr->container) {
         mr = mr->container;
     }
-    QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
+    QTAILQ_FOREACH(as, &mr->uc->address_spaces, address_spaces_link) {
         if (mr == as->root) {
             return as;
         }
@@ -578,7 +644,6 @@ static void render_memory_region(FlatView *view,
     remain = clip.size;
 
     fr.mr = mr;
-    fr.dirty_log_mask = memory_region_get_dirty_log_mask(mr);
     fr.romd_mode = mr->romd_mode;
     fr.readonly = readonly;
 
@@ -638,6 +703,7 @@ static void address_space_add_del_ioeventfds(AddressSpace *as,
     unsigned iold, inew;
     MemoryRegionIoeventfd *fd;
     MemoryRegionSection section;
+    struct uc_struct *uc = as->uc;
 
     /* Generate a symmetric difference of the old and new fd sets, adding
      * and deleting as necessary.
@@ -730,6 +796,7 @@ static void address_space_update_topology_pass(AddressSpace *as,
 {
     unsigned iold, inew;
     FlatRange *frold, *frnew;
+    struct uc_struct *uc = as->uc;
 
     /* Generate a symmetric difference of the old and new memory maps.
      * Kill ranges in the old map, and instantiate ranges in the new map.
@@ -764,16 +831,6 @@ static void address_space_update_topology_pass(AddressSpace *as,
 
             if (adding) {
                 MEMORY_LISTENER_UPDATE_REGION(frnew, as, Forward, region_nop);
-                if (frnew->dirty_log_mask & ~frold->dirty_log_mask) {
-                    MEMORY_LISTENER_UPDATE_REGION(frnew, as, Forward, log_start,
-                                                  frold->dirty_log_mask,
-                                                  frnew->dirty_log_mask);
-                }
-                if (frold->dirty_log_mask & ~frnew->dirty_log_mask) {
-                    MEMORY_LISTENER_UPDATE_REGION(frnew, as, Reverse, log_stop,
-                                                  frold->dirty_log_mask,
-                                                  frnew->dirty_log_mask);
-                }
             }
 
             ++iold;
@@ -814,39 +871,39 @@ static void address_space_update_topology(AddressSpace *as)
     address_space_update_ioeventfds(as);
 }
 
-void memory_region_transaction_begin(void)
+void memory_region_transaction_begin(struct uc_struct *uc)
 {
     qemu_flush_coalesced_mmio_buffer();
-    ++memory_region_transaction_depth;
+    ++uc->memory_region_transaction_depth;
 }
 
-static void memory_region_clear_pending(void)
+static void memory_region_clear_pending(struct uc_struct *uc)
 {
-    memory_region_update_pending = false;
-    ioeventfd_update_pending = false;
+    uc->memory_region_update_pending = false;
+    uc->ioeventfd_update_pending = false;
 }
 
-void memory_region_transaction_commit(void)
+void memory_region_transaction_commit(struct uc_struct *uc)
 {
     AddressSpace *as;
 
-    assert(memory_region_transaction_depth);
-    --memory_region_transaction_depth;
-    if (!memory_region_transaction_depth) {
-        if (memory_region_update_pending) {
+    assert(uc->memory_region_transaction_depth);
+    --uc->memory_region_transaction_depth;
+    if (!uc->memory_region_transaction_depth) {
+        if (uc->memory_region_update_pending) {
             MEMORY_LISTENER_CALL_GLOBAL(begin, Forward);
 
-            QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
+            QTAILQ_FOREACH(as, &uc->address_spaces, address_spaces_link) {
                 address_space_update_topology(as);
             }
 
             MEMORY_LISTENER_CALL_GLOBAL(commit, Forward);
-        } else if (ioeventfd_update_pending) {
-            QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
+        } else if (uc->ioeventfd_update_pending) {
+            QTAILQ_FOREACH(as, &uc->address_spaces, address_spaces_link) {
                 address_space_update_ioeventfds(as);
             }
         }
-        memory_region_clear_pending();
+        memory_region_clear_pending(uc);
    }
 }
 
@@ -856,17 +913,12 @@ static void memory_region_destructor_none(MemoryRegion *mr)
 
 static void memory_region_destructor_ram(MemoryRegion *mr)
 {
-    qemu_ram_free(mr->ram_addr);
+    qemu_ram_free(mr->uc, mr->ram_addr);
 }
 
 static void memory_region_destructor_ram_from_ptr(MemoryRegion *mr)
 {
-    qemu_ram_free_from_ptr(mr->ram_addr);
-}
-
-static void memory_region_destructor_rom_device(MemoryRegion *mr)
-{
-    qemu_ram_free(mr->ram_addr & TARGET_PAGE_MASK);
+    qemu_ram_free_from_ptr(mr->uc, mr->ram_addr);
 }
 
 static bool memory_region_need_escape(char c)
@@ -903,16 +955,18 @@ static char *memory_region_escape_name(const char *name)
     return escaped;
 }
 
-void memory_region_init(MemoryRegion *mr,
+void memory_region_init(struct uc_struct *uc,
+                        MemoryRegion *mr,
                         Object *owner,
                         const char *name,
                         uint64_t size)
 {
     if (!owner) {
-        owner = container_get(qdev_get_machine(), "/unattached");
+        owner = container_get(qdev_get_machine(uc), "/unattached");
     }
 
-    object_initialize(mr, sizeof(*mr), TYPE_MEMORY_REGION);
+    object_initialize(uc, mr, sizeof(*mr), TYPE_MEMORY_REGION);
+    mr->uc = uc;
     mr->size = int128_make64(size);
     if (size == UINT64_MAX) {
         mr->size = int128_2_64();
@@ -923,25 +977,25 @@ void memory_region_init(MemoryRegion *mr,
         char *escaped_name = memory_region_escape_name(name);
         char *name_array = g_strdup_printf("%s[*]", escaped_name);
         object_property_add_child(owner, name_array, OBJECT(mr), &error_abort);
-        object_unref(OBJECT(mr));
+        object_unref(uc, OBJECT(mr));
         g_free(name_array);
         g_free(escaped_name);
     }
 }
 
-static void memory_region_get_addr(Object *obj, Visitor *v, void *opaque,
+static void memory_region_get_addr(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                    const char *name, Error **errp)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
     uint64_t value = mr->addr;
 
     visit_type_uint64(v, &value, name, errp);
 }
 
-static void memory_region_get_container(Object *obj, Visitor *v, void *opaque,
+static void memory_region_get_container(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                         const char *name, Error **errp)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
     gchar *path = (gchar *)"";
 
     if (mr->container) {
@@ -953,42 +1007,42 @@ static void memory_region_get_container(Object *obj, Visitor *v, void *opaque,
     }
 }
 
-static Object *memory_region_resolve_container(Object *obj, void *opaque,
+static Object *memory_region_resolve_container(struct uc_struct *uc, Object *obj, void *opaque,
                                                const char *part)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
 
     return OBJECT(mr->container);
 }
 
-static void memory_region_get_priority(Object *obj, Visitor *v, void *opaque,
+static void memory_region_get_priority(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                        const char *name, Error **errp)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
     int32_t value = mr->priority;
 
     visit_type_int32(v, &value, name, errp);
 }
 
-static bool memory_region_get_may_overlap(Object *obj, Error **errp)
+static bool memory_region_get_may_overlap(struct uc_struct *uc, Object *obj, Error **errp)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
 
     return mr->may_overlap;
 }
 
-static void memory_region_get_size(Object *obj, Visitor *v, void *opaque,
+static void memory_region_get_size(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                    const char *name, Error **errp)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
     uint64_t value = memory_region_size(mr);
 
     visit_type_uint64(v, &value, name, errp);
 }
 
-static void memory_region_initfn(Object *obj)
+static void memory_region_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    MemoryRegion *mr = MEMORY_REGION(obj);
+    MemoryRegion *mr = MEMORY_REGION(uc, obj);
     ObjectProperty *op;
 
     mr->ops = &unassigned_mem_ops;
@@ -1015,7 +1069,7 @@ static void memory_region_initfn(Object *obj)
                         memory_region_get_priority,
                         NULL, /* memory_region_set_priority */
                         NULL, NULL, &error_abort);
-    object_property_add_bool(OBJECT(mr), "may-overlap",
+    object_property_add_bool(mr->uc, OBJECT(mr), "may-overlap",
                              memory_region_get_may_overlap,
                              NULL, /* memory_region_set_may_overlap */
                              &error_abort);
@@ -1025,26 +1079,25 @@ static void memory_region_initfn(Object *obj)
                         NULL, NULL, &error_abort);
 }
 
-static uint64_t unassigned_mem_read(void *opaque, hwaddr addr,
-                                    unsigned size)
+static uint64_t unassigned_mem_read(struct uc_struct *uc, hwaddr addr, unsigned size)
 {
 #ifdef DEBUG_UNASSIGNED
     printf("Unassigned mem read " TARGET_FMT_plx "\n", addr);
 #endif
-    if (current_cpu != NULL) {
-        cpu_unassigned_access(current_cpu, addr, false, false, 0, size);
+    if (uc->current_cpu != NULL) {
+        cpu_unassigned_access(uc->current_cpu, addr, false, false, 0, size);
     }
     return 0;
 }
 
-static void unassigned_mem_write(void *opaque, hwaddr addr,
+static void unassigned_mem_write(struct uc_struct *uc, hwaddr addr,
                                  uint64_t val, unsigned size)
 {
 #ifdef DEBUG_UNASSIGNED
     printf("Unassigned mem write " TARGET_FMT_plx " = 0x%"PRIx64"\n", addr, val);
 #endif
-    if (current_cpu != NULL) {
-        cpu_unassigned_access(current_cpu, addr, true, false, 0, size);
+    if (uc->current_cpu != NULL) {
+        cpu_unassigned_access(uc->current_cpu, addr, true, false, 0, size);
     }
 }
 
@@ -1132,7 +1185,7 @@ MemTxResult memory_region_dispatch_read(MemoryRegion *mr,
     MemTxResult r;
 
     if (!memory_region_access_valid(mr, addr, size, false)) {
-        *pval = unassigned_mem_read(mr, addr, size);
+        *pval = unassigned_mem_read(mr->uc, mr, addr, size);
         return MEMTX_DECODE_ERROR;
     }
 
@@ -1148,7 +1201,7 @@ MemTxResult memory_region_dispatch_write(MemoryRegion *mr,
                                          MemTxAttrs attrs)
 {
     if (!memory_region_access_valid(mr, addr, size, true)) {
-        unassigned_mem_write(mr, addr, data, size);
+        unassigned_mem_write(mr->uc, mr, addr, data, size);
         return MEMTX_DECODE_ERROR;
     }
 
@@ -1174,31 +1227,37 @@ MemTxResult memory_region_dispatch_write(MemoryRegion *mr,
     }
 }
 
-void memory_region_init_io(MemoryRegion *mr,
+void memory_region_init_io(struct uc_struct *uc,
+                           MemoryRegion *mr,
                            Object *owner,
                            const MemoryRegionOps *ops,
                            void *opaque,
                            const char *name,
                            uint64_t size)
 {
-    memory_region_init(mr, owner, name, size);
+    memory_region_init(uc, mr, owner, name, size);
     mr->ops = ops ? ops : &unassigned_mem_ops;
     mr->opaque = opaque;
     mr->terminates = true;
 }
 
-void memory_region_init_ram(MemoryRegion *mr,
+void memory_region_init_ram(struct uc_struct *uc,
+                            MemoryRegion *mr,
                             Object *owner,
                             const char *name,
                             uint64_t size,
+                            uint32_t perms,
                             Error **errp)
 {
-    memory_region_init(mr, owner, name, size);
+    memory_region_init(uc, mr, owner, name, size);
     mr->ram = true;
+    if (!(perms & UC_PROT_WRITE)) {
+        mr->readonly = true;
+    }
+    mr->perms = perms;
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram;
     mr->ram_addr = qemu_ram_alloc(size, mr, errp);
-    mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
 }
 
 void memory_region_init_resizeable_ram(MemoryRegion *mr,
@@ -1216,7 +1275,6 @@ void memory_region_init_resizeable_ram(MemoryRegion *mr,
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram;
     mr->ram_addr = qemu_ram_alloc_resizeable(size, max_size, resized, mr, errp);
-    mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
 }
 
 #ifdef __linux__
@@ -1233,7 +1291,6 @@ void memory_region_init_ram_from_file(MemoryRegion *mr,
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram;
     mr->ram_addr = qemu_ram_alloc_from_file(size, mr, share, path, errp);
-    mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
 }
 #endif
 
@@ -1247,7 +1304,6 @@ void memory_region_init_ram_ptr(MemoryRegion *mr,
     mr->ram = true;
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram_from_ptr;
-    mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
 
     /* qemu_ram_alloc_from_ptr cannot fail with ptr != NULL.  */
     assert(ptr != NULL);
@@ -1356,9 +1412,9 @@ void memory_region_unref(MemoryRegion *mr)
 {
     Object *obj = OBJECT(mr);
     if (obj && obj->parent) {
-        object_unref(obj->parent);
+        object_unref(mr->uc, obj->parent);
     } else {
-        object_unref(obj);
+        object_unref(mr->uc, obj);
     }
 }
 
@@ -1389,162 +1445,24 @@ bool memory_region_is_skip_dump(MemoryRegion *mr)
     return mr->skip_dump;
 }
 
-uint8_t memory_region_get_dirty_log_mask(MemoryRegion *mr)
-{
-    uint8_t mask = mr->dirty_log_mask;
-    if (global_dirty_log) {
-        mask |= (1 << DIRTY_MEMORY_MIGRATION);
-    }
-    return mask;
-}
-
-bool memory_region_is_logging(MemoryRegion *mr, uint8_t client)
-{
-    return memory_region_get_dirty_log_mask(mr) & (1 << client);
-}
-
 bool memory_region_is_rom(MemoryRegion *mr)
 {
     return mr->ram && mr->readonly;
 }
 
-bool memory_region_is_iommu(MemoryRegion *mr)
-{
-    return mr->iommu_ops;
-}
-
-void memory_region_register_iommu_notifier(MemoryRegion *mr, Notifier *n)
-{
-    notifier_list_add(&mr->iommu_notify, n);
-}
-
-void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n,
-                                hwaddr granularity, bool is_write)
-{
-    hwaddr addr;
-    IOMMUTLBEntry iotlb;
-
-    for (addr = 0; addr < memory_region_size(mr); addr += granularity) {
-        iotlb = mr->iommu_ops->translate(mr, addr, is_write);
-        if (iotlb.perm != IOMMU_NONE) {
-            n->notify(n, &iotlb);
-        }
-
-        /* if (2^64 - MR size) < granularity, it's possible to get an
-         * infinite loop here.  This should catch such a wraparound */
-        if ((addr + granularity) < addr) {
-            break;
-        }
-    }
-}
-
-void memory_region_unregister_iommu_notifier(Notifier *n)
-{
-    notifier_remove(n);
-}
-
-void memory_region_notify_iommu(MemoryRegion *mr,
-                                IOMMUTLBEntry entry)
-{
-    assert(memory_region_is_iommu(mr));
-    notifier_list_notify(&mr->iommu_notify, &entry);
-}
-
-void memory_region_set_log(MemoryRegion *mr, bool log, unsigned client)
-{
-    uint8_t mask = 1 << client;
-    uint8_t old_logging;
-
-    assert(client == DIRTY_MEMORY_VGA);
-    old_logging = mr->vga_logging_count;
-    mr->vga_logging_count += log ? 1 : -1;
-    if (!!old_logging == !!mr->vga_logging_count) {
-        return;
-    }
-
-    memory_region_transaction_begin();
-    mr->dirty_log_mask = (mr->dirty_log_mask & ~mask) | (log * mask);
-    memory_region_update_pending |= mr->enabled;
-    memory_region_transaction_commit();
-}
-
-bool memory_region_get_dirty(MemoryRegion *mr, hwaddr addr,
-                             hwaddr size, unsigned client)
-{
-    assert(mr->ram_addr != RAM_ADDR_INVALID);
-    return cpu_physical_memory_get_dirty(mr->ram_addr + addr, size, client);
-}
-
-void memory_region_set_dirty(MemoryRegion *mr, hwaddr addr,
-                             hwaddr size)
-{
-    assert(mr->ram_addr != RAM_ADDR_INVALID);
-    cpu_physical_memory_set_dirty_range(mr->ram_addr + addr, size,
-                                        memory_region_get_dirty_log_mask(mr));
-}
-
-bool memory_region_test_and_clear_dirty(MemoryRegion *mr, hwaddr addr,
-                                        hwaddr size, unsigned client)
-{
-    assert(mr->ram_addr != RAM_ADDR_INVALID);
-    return cpu_physical_memory_test_and_clear_dirty(mr->ram_addr + addr,
-                                                    size, client);
-}
-
-
-void memory_region_sync_dirty_bitmap(MemoryRegion *mr)
-{
-    AddressSpace *as;
-    FlatRange *fr;
-
-    QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
-        FlatView *view = address_space_get_flatview(as);
-        FOR_EACH_FLAT_RANGE(fr, view) {
-            if (fr->mr == mr) {
-                MEMORY_LISTENER_UPDATE_REGION(fr, as, Forward, log_sync);
-            }
-        }
-        flatview_unref(view);
-    }
-}
-
 void memory_region_set_readonly(MemoryRegion *mr, bool readonly)
 {
     if (mr->readonly != readonly) {
-        memory_region_transaction_begin();
+        memory_region_transaction_begin(mr->uc);
         mr->readonly = readonly;
+        if (readonly) {
+            mr->perms &= ~UC_PROT_WRITE;
+        } else {
+            mr->perms |= UC_PROT_WRITE;
+        }
         memory_region_update_pending |= mr->enabled;
-        memory_region_transaction_commit();
+        memory_region_transaction_commit(mr->uc);
     }
-}
-
-void memory_region_rom_device_set_romd(MemoryRegion *mr, bool romd_mode)
-{
-    if (mr->romd_mode != romd_mode) {
-        memory_region_transaction_begin();
-        mr->romd_mode = romd_mode;
-        memory_region_update_pending |= mr->enabled;
-        memory_region_transaction_commit();
-    }
-}
-
-void memory_region_reset_dirty(MemoryRegion *mr, hwaddr addr,
-                               hwaddr size, unsigned client)
-{
-    assert(mr->ram_addr != RAM_ADDR_INVALID);
-    cpu_physical_memory_test_and_clear_dirty(mr->ram_addr + addr, size,
-                                             client);
-}
-
-int memory_region_get_fd(MemoryRegion *mr)
-{
-    if (mr->alias) {
-        return memory_region_get_fd(mr->alias);
-    }
-
-    assert(mr->ram_addr != RAM_ADDR_INVALID);
-
-    return qemu_get_ram_fd(mr->ram_addr & TARGET_PAGE_MASK);
 }
 
 void *memory_region_get_ram_ptr(MemoryRegion *mr)
@@ -1555,14 +1473,7 @@ void *memory_region_get_ram_ptr(MemoryRegion *mr)
 
     assert(mr->ram_addr != RAM_ADDR_INVALID);
 
-    return qemu_get_ram_ptr(mr->ram_addr & TARGET_PAGE_MASK);
-}
-
-void memory_region_ram_resize(MemoryRegion *mr, ram_addr_t newsize, Error **errp)
-{
-    assert(mr->ram_addr != RAM_ADDR_INVALID);
-
-    qemu_ram_resize(mr->ram_addr, newsize, errp);
+    return qemu_get_ram_ptr(mr->uc, mr->ram_addr & TARGET_PAGE_MASK);
 }
 
 static void memory_region_update_coalesced_range_as(MemoryRegion *mr, AddressSpace *as)
@@ -1572,6 +1483,7 @@ static void memory_region_update_coalesced_range_as(MemoryRegion *mr, AddressSpa
     CoalescedMemoryRange *cmr;
     AddrRange tmp;
     MemoryRegionSection section;
+    struct uc_struct *uc = mr->uc;
 
     view = address_space_get_flatview(as);
     FOR_EACH_FLAT_RANGE(fr, view) {
@@ -1606,27 +1518,9 @@ static void memory_region_update_coalesced_range(MemoryRegion *mr)
 {
     AddressSpace *as;
 
-    QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
+    QTAILQ_FOREACH(as, &mr->uc->address_spaces, address_spaces_link) {
         memory_region_update_coalesced_range_as(mr, as);
     }
-}
-
-void memory_region_set_coalescing(MemoryRegion *mr)
-{
-    memory_region_clear_coalescing(mr);
-    memory_region_add_coalescing(mr, 0, int128_get64(mr->size));
-}
-
-void memory_region_add_coalescing(MemoryRegion *mr,
-                                  hwaddr offset,
-                                  uint64_t size)
-{
-    CoalescedMemoryRange *cmr = g_malloc(sizeof(*cmr));
-
-    cmr->addr = addrrange_make(int128_make64(offset), int128_make64(size));
-    QTAILQ_INSERT_TAIL(&mr->coalesced, cmr, link);
-    memory_region_update_coalesced_range(mr);
-    memory_region_set_flush_coalesced(mr);
 }
 
 void memory_region_clear_coalescing(MemoryRegion *mr)
@@ -1646,19 +1540,6 @@ void memory_region_clear_coalescing(MemoryRegion *mr)
 
     if (updated) {
         memory_region_update_coalesced_range(mr);
-    }
-}
-
-void memory_region_set_flush_coalesced(MemoryRegion *mr)
-{
-    mr->flush_coalesced_mmio = true;
-}
-
-void memory_region_clear_flush_coalesced(MemoryRegion *mr)
-{
-    qemu_flush_coalesced_mmio_buffer();
-    if (QTAILQ_EMPTY(&mr->coalesced)) {
-        mr->flush_coalesced_mmio = false;
     }
 }
 
@@ -1691,7 +1572,7 @@ void memory_region_add_eventfd(MemoryRegion *mr,
     if (size) {
         adjust_endianness(mr, &mrfd.data, size);
     }
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(uc);
     for (i = 0; i < mr->ioeventfd_nb; ++i) {
         if (memory_region_ioeventfd_before(mrfd, mr->ioeventfds[i])) {
             break;
@@ -1703,8 +1584,8 @@ void memory_region_add_eventfd(MemoryRegion *mr,
     memmove(&mr->ioeventfds[i+1], &mr->ioeventfds[i],
             sizeof(*mr->ioeventfds) * (mr->ioeventfd_nb-1 - i));
     mr->ioeventfds[i] = mrfd;
-    ioeventfd_update_pending |= mr->enabled;
-    memory_region_transaction_commit();
+    mr->uc->ioeventfd_update_pending |= mr->enabled;
+    memory_region_transaction_commit(mr->uc);
 }
 
 void memory_region_del_eventfd(MemoryRegion *mr,
@@ -1726,7 +1607,7 @@ void memory_region_del_eventfd(MemoryRegion *mr,
     if (size) {
         adjust_endianness(mr, &mrfd.data, size);
     }
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(mr->uc);
     for (i = 0; i < mr->ioeventfd_nb; ++i) {
         if (memory_region_ioeventfd_equal(mrfd, mr->ioeventfds[i])) {
             break;
@@ -1738,8 +1619,8 @@ void memory_region_del_eventfd(MemoryRegion *mr,
     --mr->ioeventfd_nb;
     mr->ioeventfds = g_realloc(mr->ioeventfds,
                                   sizeof(*mr->ioeventfds)*mr->ioeventfd_nb + 1);
-    ioeventfd_update_pending |= mr->enabled;
-    memory_region_transaction_commit();
+    mr->uc->ioeventfd_update_pending |= mr->enabled;
+    memory_region_transaction_commit(mr->uc);
 }
 
 static void memory_region_update_container_subregions(MemoryRegion *subregion)
@@ -1748,7 +1629,7 @@ static void memory_region_update_container_subregions(MemoryRegion *subregion)
     MemoryRegion *mr = subregion->container;
     MemoryRegion *other;
 
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(mr->uc);
 
     memory_region_ref(subregion);
     QTAILQ_FOREACH(other, &mr->subregions, subregions_link) {
@@ -1780,8 +1661,8 @@ static void memory_region_update_container_subregions(MemoryRegion *subregion)
     }
     QTAILQ_INSERT_TAIL(&mr->subregions, subregion, subregions_link);
 done:
-    memory_region_update_pending |= mr->enabled && subregion->enabled;
-    memory_region_transaction_commit();
+    mr->uc->memory_region_update_pending |= mr->enabled && subregion->enabled;
+    memory_region_transaction_commit(mr->uc);
 }
 
 static void memory_region_add_subregion_common(MemoryRegion *mr,
@@ -1791,6 +1672,7 @@ static void memory_region_add_subregion_common(MemoryRegion *mr,
     assert(!subregion->container);
     subregion->container = mr;
     subregion->addr = offset;
+    subregion->end = offset + int128_get64(subregion->size);
     memory_region_update_container_subregions(subregion);
 }
 
@@ -1816,13 +1698,13 @@ void memory_region_add_subregion_overlap(MemoryRegion *mr,
 void memory_region_del_subregion(MemoryRegion *mr,
                                  MemoryRegion *subregion)
 {
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(mr->uc);
     assert(subregion->container == mr);
     subregion->container = NULL;
     QTAILQ_REMOVE(&mr->subregions, subregion, subregions_link);
     memory_region_unref(subregion);
-    memory_region_update_pending |= mr->enabled && subregion->enabled;
-    memory_region_transaction_commit();
+    mr->uc->memory_region_update_pending |= mr->enabled && subregion->enabled;
+    memory_region_transaction_commit(mr->uc);
 }
 
 void memory_region_set_enabled(MemoryRegion *mr, bool enabled)
@@ -1830,10 +1712,10 @@ void memory_region_set_enabled(MemoryRegion *mr, bool enabled)
     if (enabled == mr->enabled) {
         return;
     }
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(mr->uc);
     mr->enabled = enabled;
-    memory_region_update_pending = true;
-    memory_region_transaction_commit();
+    mr->uc->memory_region_update_pending = true;
+    memory_region_transaction_commit(mr->uc);
 }
 
 void memory_region_set_size(MemoryRegion *mr, uint64_t size)
@@ -1846,7 +1728,7 @@ void memory_region_set_size(MemoryRegion *mr, uint64_t size)
     if (int128_eq(s, mr->size)) {
         return;
     }
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(mr->uc);
     mr->size = s;
     memory_region_update_pending = true;
     memory_region_transaction_commit();
@@ -1857,13 +1739,13 @@ static void memory_region_readd_subregion(MemoryRegion *mr)
     MemoryRegion *container = mr->container;
 
     if (container) {
-        memory_region_transaction_begin();
+        memory_region_transaction_begin(mr->uc);
         memory_region_ref(mr);
         memory_region_del_subregion(container, mr);
         mr->container = container;
         memory_region_update_container_subregions(mr);
         memory_region_unref(mr);
-        memory_region_transaction_commit();
+        memory_region_transaction_commit(mr->uc);
     }
 }
 
@@ -1883,10 +1765,10 @@ void memory_region_set_alias_offset(MemoryRegion *mr, hwaddr offset)
         return;
     }
 
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(mr->uc);
     mr->alias_offset = offset;
-    memory_region_update_pending |= mr->enabled;
-    memory_region_transaction_commit();
+    mr->uc->memory_region_update_pending |= mr->enabled;
+    memory_region_transaction_commit(mr->uc);
 }
 
 ram_addr_t memory_region_get_ram_addr(MemoryRegion *mr)
@@ -1993,42 +1875,6 @@ bool memory_region_present(MemoryRegion *container, hwaddr addr)
     return mr && mr != container;
 }
 
-void address_space_sync_dirty_bitmap(AddressSpace *as)
-{
-    FlatView *view;
-    FlatRange *fr;
-
-    view = address_space_get_flatview(as);
-    FOR_EACH_FLAT_RANGE(fr, view) {
-        MEMORY_LISTENER_UPDATE_REGION(fr, as, Forward, log_sync);
-    }
-    flatview_unref(view);
-}
-
-void memory_global_dirty_log_start(void)
-{
-    global_dirty_log = true;
-
-    MEMORY_LISTENER_CALL_GLOBAL(log_global_start, Forward);
-
-    /* Refresh DIRTY_LOG_MIGRATION bit.  */
-    memory_region_transaction_begin();
-    memory_region_update_pending = true;
-    memory_region_transaction_commit();
-}
-
-void memory_global_dirty_log_stop(void)
-{
-    global_dirty_log = false;
-
-    /* Refresh DIRTY_LOG_MIGRATION bit.  */
-    memory_region_transaction_begin();
-    memory_region_update_pending = true;
-    memory_region_transaction_commit();
-
-    MEMORY_LISTENER_CALL_GLOBAL(log_global_stop, Reverse);
-}
-
 static void listener_add_address_space(MemoryListener *listener,
                                        AddressSpace *as)
 {
@@ -2043,11 +1889,6 @@ static void listener_add_address_space(MemoryListener *listener,
     if (listener->begin) {
         listener->begin(listener);
     }
-    if (global_dirty_log) {
-        if (listener->log_global_start) {
-            listener->log_global_start(listener);
-        }
-    }
 
     view = address_space_get_flatview(as);
     FOR_EACH_FLAT_RANGE(fr, view) {
@@ -2059,9 +1900,6 @@ static void listener_add_address_space(MemoryListener *listener,
             .offset_within_address_space = int128_get64(fr->addr.start),
             .readonly = fr->readonly,
         };
-        if (fr->dirty_log_mask && listener->log_start) {
-            listener->log_start(listener, &section, 0, fr->dirty_log_mask);
-        }
         if (listener->region_add) {
             listener->region_add(listener, &section);
         }
@@ -2072,18 +1910,18 @@ static void listener_add_address_space(MemoryListener *listener,
     flatview_unref(view);
 }
 
-void memory_listener_register(MemoryListener *listener, AddressSpace *filter)
+void memory_listener_register(struct uc_struct *uc, MemoryListener *listener, AddressSpace *filter)
 {
     MemoryListener *other = NULL;
     AddressSpace *as;
 
     listener->address_space_filter = filter;
-    if (QTAILQ_EMPTY(&memory_listeners)
-        || listener->priority >= QTAILQ_LAST(&memory_listeners,
+    if (QTAILQ_EMPTY(&uc->memory_listeners)
+        || listener->priority >= QTAILQ_LAST(&uc->memory_listeners,
                                              memory_listeners)->priority) {
-        QTAILQ_INSERT_TAIL(&memory_listeners, listener, link);
+        QTAILQ_INSERT_TAIL(&uc->memory_listeners, listener, link);
     } else {
-        QTAILQ_FOREACH(other, &memory_listeners, link) {
+        QTAILQ_FOREACH(other, &uc->memory_listeners, link) {
             if (listener->priority < other->priority) {
                 break;
             }
@@ -2091,30 +1929,34 @@ void memory_listener_register(MemoryListener *listener, AddressSpace *filter)
         QTAILQ_INSERT_BEFORE(other, listener, link);
     }
 
-    QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
+    QTAILQ_FOREACH(as, &uc->address_spaces, address_spaces_link) {
         listener_add_address_space(listener, as);
     }
 }
 
-void memory_listener_unregister(MemoryListener *listener)
+void memory_listener_unregister(struct uc_struct *uc, MemoryListener *listener)
 {
-    QTAILQ_REMOVE(&memory_listeners, listener, link);
+    QTAILQ_REMOVE(&uc->memory_listeners, listener, link);
 }
 
-void address_space_init(AddressSpace *as, MemoryRegion *root, const char *name)
+void address_space_init(struct uc *uc, AddressSpace *as, MemoryRegion *root, const char *name)
 {
+    if (QTAILQ_EMPTY(&uc->address_spaces)) {
+        memory_init(uc);
+    }
+
     memory_region_ref(root);
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(uc);
     as->root = root;
     as->current_map = g_new(FlatView, 1);
     flatview_init(as->current_map);
     as->ioeventfd_nb = 0;
     as->ioeventfds = NULL;
-    QTAILQ_INSERT_TAIL(&address_spaces, as, address_spaces_link);
+    QTAILQ_INSERT_TAIL(&uc->address_spaces, as, address_spaces_link);
     as->name = g_strdup(name ? name : "anonymous");
     address_space_init_dispatch(as);
     memory_region_update_pending |= root->enabled;
-    memory_region_transaction_commit();
+    memory_region_transaction_commit(uc);
 }
 
 static void do_address_space_destroy(AddressSpace *as)
@@ -2138,10 +1980,10 @@ void address_space_destroy(AddressSpace *as)
     MemoryRegion *root = as->root;
 
     /* Flush out anything from MemoryListeners listening in on this */
-    memory_region_transaction_begin();
+    memory_region_transaction_begin(as->uc);
     as->root = NULL;
     memory_region_transaction_commit();
-    QTAILQ_REMOVE(&address_spaces, as, address_spaces_link);
+    QTAILQ_REMOVE(&as->uc->address_spaces, as, address_spaces_link);
     address_space_unregister(as);
 
     /* At this point, as->dispatch and as->current_map are dummy
@@ -2161,131 +2003,6 @@ struct MemoryRegionList {
 
 typedef QTAILQ_HEAD(queue, MemoryRegionList) MemoryRegionListHead;
 
-static void mtree_print_mr(fprintf_function mon_printf, void *f,
-                           const MemoryRegion *mr, unsigned int level,
-                           hwaddr base,
-                           MemoryRegionListHead *alias_print_queue)
-{
-    MemoryRegionList *new_ml, *ml, *next_ml;
-    MemoryRegionListHead submr_print_queue;
-    const MemoryRegion *submr;
-    unsigned int i;
-
-    if (!mr) {
-        return;
-    }
-
-    for (i = 0; i < level; i++) {
-        mon_printf(f, "  ");
-    }
-
-    if (mr->alias) {
-        MemoryRegionList *ml;
-        bool found = false;
-
-        /* check if the alias is already in the queue */
-        QTAILQ_FOREACH(ml, alias_print_queue, queue) {
-            if (ml->mr == mr->alias) {
-                found = true;
-            }
-        }
-
-        if (!found) {
-            ml = g_new(MemoryRegionList, 1);
-            ml->mr = mr->alias;
-            QTAILQ_INSERT_TAIL(alias_print_queue, ml, queue);
-        }
-        mon_printf(f, TARGET_FMT_plx "-" TARGET_FMT_plx
-                   " (prio %d, %c%c): alias %s @%s " TARGET_FMT_plx
-                   "-" TARGET_FMT_plx "%s\n",
-                   base + mr->addr,
-                   base + mr->addr
-                   + (int128_nz(mr->size) ?
-                      (hwaddr)int128_get64(int128_sub(mr->size,
-                                                      int128_one())) : 0),
-                   mr->priority,
-                   mr->romd_mode ? 'R' : '-',
-                   !mr->readonly && !(mr->rom_device && mr->romd_mode) ? 'W'
-                                                                       : '-',
-                   memory_region_name(mr),
-                   memory_region_name(mr->alias),
-                   mr->alias_offset,
-                   mr->alias_offset
-                   + (int128_nz(mr->size) ?
-                      (hwaddr)int128_get64(int128_sub(mr->size,
-                                                      int128_one())) : 0),
-                   mr->enabled ? "" : " [disabled]");
-    } else {
-        mon_printf(f,
-                   TARGET_FMT_plx "-" TARGET_FMT_plx " (prio %d, %c%c): %s%s\n",
-                   base + mr->addr,
-                   base + mr->addr
-                   + (int128_nz(mr->size) ?
-                      (hwaddr)int128_get64(int128_sub(mr->size,
-                                                      int128_one())) : 0),
-                   mr->priority,
-                   mr->romd_mode ? 'R' : '-',
-                   !mr->readonly && !(mr->rom_device && mr->romd_mode) ? 'W'
-                                                                       : '-',
-                   memory_region_name(mr),
-                   mr->enabled ? "" : " [disabled]");
-    }
-
-    QTAILQ_INIT(&submr_print_queue);
-
-    QTAILQ_FOREACH(submr, &mr->subregions, subregions_link) {
-        new_ml = g_new(MemoryRegionList, 1);
-        new_ml->mr = submr;
-        QTAILQ_FOREACH(ml, &submr_print_queue, queue) {
-            if (new_ml->mr->addr < ml->mr->addr ||
-                (new_ml->mr->addr == ml->mr->addr &&
-                 new_ml->mr->priority > ml->mr->priority)) {
-                QTAILQ_INSERT_BEFORE(ml, new_ml, queue);
-                new_ml = NULL;
-                break;
-            }
-        }
-        if (new_ml) {
-            QTAILQ_INSERT_TAIL(&submr_print_queue, new_ml, queue);
-        }
-    }
-
-    QTAILQ_FOREACH(ml, &submr_print_queue, queue) {
-        mtree_print_mr(mon_printf, f, ml->mr, level + 1, base + mr->addr,
-                       alias_print_queue);
-    }
-
-    QTAILQ_FOREACH_SAFE(ml, &submr_print_queue, queue, next_ml) {
-        g_free(ml);
-    }
-}
-
-void mtree_info(fprintf_function mon_printf, void *f)
-{
-    MemoryRegionListHead ml_head;
-    MemoryRegionList *ml, *ml2;
-    AddressSpace *as;
-
-    QTAILQ_INIT(&ml_head);
-
-    QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
-        mon_printf(f, "address-space: %s\n", as->name);
-        mtree_print_mr(mon_printf, f, as->root, 1, 0, &ml_head);
-        mon_printf(f, "\n");
-    }
-
-    /* print aliased regions */
-    QTAILQ_FOREACH(ml, &ml_head, queue) {
-        mon_printf(f, "memory-region: %s\n", memory_region_name(ml->mr));
-        mtree_print_mr(mon_printf, f, ml->mr, 1, 0, &ml_head);
-        mon_printf(f, "\n");
-    }
-
-    QTAILQ_FOREACH_SAFE(ml, &ml_head, queue, ml2) {
-        g_free(ml);
-    }
-}
-
 static const TypeInfo memory_region_info = {
     .parent             = TYPE_OBJECT,
     .name               = TYPE_MEMORY_REGION,
@@ -2294,9 +2011,8 @@ static const TypeInfo memory_region_info = {
     .instance_finalize  = memory_region_finalize,
 };
 
-static void memory_register_types(void)
+void memory_register_types(struct uc_struct *uc)
 {
-    type_register_static(&memory_region_info);
+    type_register_static(uc, &memory_region_info);
 }
 
-type_init(memory_register_types)

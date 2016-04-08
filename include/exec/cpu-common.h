@@ -3,6 +3,8 @@
 
 /* CPU interfaces that are target independent.  */
 
+struct uc_struct;
+
 #ifndef CONFIG_USER_ONLY
 #include "exec/hwaddr.h"
 #endif
@@ -15,18 +17,6 @@
 #include "qemu/queue.h"
 #include "qemu/fprintf-fn.h"
 #include "qemu/typedefs.h"
-
-/**
- * CPUListState:
- * @cpu_fprintf: Print function.
- * @file: File to print to using @cpu_fprint.
- *
- * State commonly used for iterating over CPU models.
- */
-typedef struct CPUListState {
-    fprintf_function cpu_fprintf;
-    FILE *file;
-} CPUListState;
 
 typedef enum MMUAccessType {
     MMU_DATA_LOAD  = 0,
@@ -127,7 +117,7 @@ void stq_phys(AddressSpace *as, hwaddr addr, uint64_t val);
 
 void cpu_physical_memory_write_rom(AddressSpace *as, hwaddr addr,
                                    const uint8_t *buf, int len);
-void cpu_flush_icache_range(hwaddr start, int len);
+void cpu_flush_icache_range(AddressSpace *as, hwaddr start, int len);
 
 extern struct MemoryRegion io_mem_rom;
 extern struct MemoryRegion io_mem_notdirty;

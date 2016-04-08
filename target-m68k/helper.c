@@ -19,115 +19,29 @@
  */
 
 #include "cpu.h"
-#include "exec/gdbstub.h"
 
 #include "exec/helper-proto.h"
 
 #define SIGNBIT (1u << 31)
 
-/* Sort alphabetically, except for "any". */
-static gint m68k_cpu_list_compare(gconstpointer a, gconstpointer b)
-{
-    ObjectClass *class_a = (ObjectClass *)a;
-    ObjectClass *class_b = (ObjectClass *)b;
-    const char *name_a, *name_b;
-
-    name_a = object_class_get_name(class_a);
-    name_b = object_class_get_name(class_b);
-    if (strcmp(name_a, "any-" TYPE_M68K_CPU) == 0) {
-        return 1;
-    } else if (strcmp(name_b, "any-" TYPE_M68K_CPU) == 0) {
-        return -1;
-    } else {
-        return strcasecmp(name_a, name_b);
-    }
-}
-
-static void m68k_cpu_list_entry(gpointer data, gpointer user_data)
-{
-    ObjectClass *c = data;
-    CPUListState *s = user_data;
-    const char *typename;
-    char *name;
-
-    typename = object_class_get_name(c);
-    name = g_strndup(typename, strlen(typename) - strlen("-" TYPE_M68K_CPU));
-    (*s->cpu_fprintf)(s->file, "%s\n",
-                      name);
-    g_free(name);
-}
-
-void m68k_cpu_list(FILE *f, fprintf_function cpu_fprintf)
-{
-    CPUListState s = {
-        .file = f,
-        .cpu_fprintf = cpu_fprintf,
-    };
-    GSList *list;
-
-    list = object_class_get_list(TYPE_M68K_CPU, false);
-    list = g_slist_sort(list, m68k_cpu_list_compare);
-    g_slist_foreach(list, m68k_cpu_list_entry, &s);
-    g_slist_free(list);
-}
-
-static int fpu_gdb_get_reg(CPUM68KState *env, uint8_t *mem_buf, int n)
-{
-    if (n < 8) {
-        stfq_p(mem_buf, env->fregs[n]);
-        return 8;
-    }
-    if (n < 11) {
-        /* FP control registers (not implemented)  */
-        memset(mem_buf, 0, 4);
-        return 4;
-    }
-    return 0;
-}
-
-static int fpu_gdb_set_reg(CPUM68KState *env, uint8_t *mem_buf, int n)
-{
-    if (n < 8) {
-        env->fregs[n] = ldfq_p(mem_buf);
-        return 8;
-    }
-    if (n < 11) {
-        /* FP control registers (not implemented)  */
-        return 4;
-    }
-    return 0;
-}
-
-M68kCPU *cpu_m68k_init(const char *cpu_model)
+M68kCPU *cpu_m68k_init(struct uc_struct *uc, const char *cpu_model)
 {
     M68kCPU *cpu;
     CPUM68KState *env;
     ObjectClass *oc;
 
-    oc = cpu_class_by_name(TYPE_M68K_CPU, cpu_model);
+    oc = cpu_class_by_name(uc, TYPE_M68K_CPU, cpu_model);
     if (oc == NULL) {
         return NULL;
     }
-    cpu = M68K_CPU(object_new(object_class_get_name(oc)));
+    cpu = M68K_CPU(uc, object_new(uc, object_class_get_name(oc)));
     env = &cpu->env;
 
     register_m68k_insns(env);
 
-    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
+    object_property_set_bool(uc, OBJECT(cpu), true, "realized", NULL);
 
     return cpu;
-}
-
-void m68k_cpu_init_gdb(M68kCPU *cpu)
-{
-    CPUState *cs = CPU(cpu);
-    CPUM68KState *env = &cpu->env;
-
-    if (m68k_feature(env, M68K_FEATURE_CF_FPU)) {
-        gdb_register_coprocessor(cs, fpu_gdb_get_reg, fpu_gdb_set_reg,
-                                 11, "cf-fp.xml", 18);
-    }
-    /* TODO: Add [E]MAC registers.  */
 }
 
 void cpu_m68k_flush_flags(CPUM68KState *env, int cc_op)
@@ -867,7 +781,7 @@ void HELPER(set_mac_extu)(CPUM68KState *env, uint32_t val, uint32_t acc)
 
 void m68k_cpu_exec_enter(CPUState *cs)
 {
-    M68kCPU *cpu = M68K_CPU(cs);
+    M68kCPU *cpu = M68K_CPU(cs->uc, cs);
     CPUM68KState *env = &cpu->env;
 
     env->cc_op = CC_OP_FLAGS;
@@ -877,7 +791,7 @@ void m68k_cpu_exec_enter(CPUState *cs)
 
 void m68k_cpu_exec_exit(CPUState *cs)
 {
-    M68kCPU *cpu = M68K_CPU(cs);
+    M68kCPU *cpu = M68K_CPU(cs->uc, cs);
     CPUM68KState *env = &cpu->env;
 
     cpu_m68k_flush_flags(env, env->cc_op);

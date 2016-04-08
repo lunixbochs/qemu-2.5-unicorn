@@ -757,10 +757,10 @@ void tcg_gen_goto_tb(unsigned idx);
 
 #if TARGET_LONG_BITS == 32
 #define TCGv TCGv_i32
-#define tcg_temp_new() tcg_temp_new_i32()
+#define tcg_temp_new(s) tcg_temp_new_i32(s)
 #define tcg_global_reg_new tcg_global_reg_new_i32
 #define tcg_global_mem_new tcg_global_mem_new_i32
-#define tcg_temp_local_new() tcg_temp_local_new_i32()
+#define tcg_temp_local_new(s) tcg_temp_local_new_i32(s)
 #define tcg_temp_free tcg_temp_free_i32
 #define TCGV_UNUSED(x) TCGV_UNUSED_I32(x)
 #define TCGV_IS_UNUSED(x) TCGV_IS_UNUSED_I32(x)
@@ -769,10 +769,10 @@ void tcg_gen_goto_tb(unsigned idx);
 #define tcg_gen_qemu_st_tl tcg_gen_qemu_st_i32
 #else
 #define TCGv TCGv_i64
-#define tcg_temp_new() tcg_temp_new_i64()
+#define tcg_temp_new(s) tcg_temp_new_i64(s)
 #define tcg_global_reg_new tcg_global_reg_new_i64
 #define tcg_global_mem_new tcg_global_mem_new_i64
-#define tcg_temp_local_new() tcg_temp_local_new_i64()
+#define tcg_temp_local_new(s) tcg_temp_local_new_i64(s)
 #define tcg_temp_free tcg_temp_free_i64
 #define TCGV_UNUSED(x) TCGV_UNUSED_I64(x)
 #define TCGV_IS_UNUSED(x) TCGV_IS_UNUSED_I64(x)
@@ -999,25 +999,25 @@ static inline void tcg_gen_qemu_st64(TCGv_i64 arg, TCGv addr, int mem_index)
 #endif
 
 #if UINTPTR_MAX == UINT32_MAX
-# define tcg_gen_ld_ptr(R, A, O) \
-    tcg_gen_ld_i32(TCGV_PTR_TO_NAT(R), (A), (O))
+# define tcg_gen_ld_ptr(S, R, A, O) \
+    tcg_gen_ld_i32(S, TCGV_PTR_TO_NAT(R), (A), (O))
 # define tcg_gen_discard_ptr(A) \
     tcg_gen_discard_i32(TCGV_PTR_TO_NAT(A))
-# define tcg_gen_add_ptr(R, A, B) \
-    tcg_gen_add_i32(TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), TCGV_PTR_TO_NAT(B))
-# define tcg_gen_addi_ptr(R, A, B) \
-    tcg_gen_addi_i32(TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), (B))
-# define tcg_gen_ext_i32_ptr(R, A) \
-    tcg_gen_mov_i32(TCGV_PTR_TO_NAT(R), (A))
+# define tcg_gen_add_ptr(S, R, A, B) \
+    tcg_gen_add_i32(S, TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), TCGV_PTR_TO_NAT(B))
+# define tcg_gen_addi_ptr(S, R, A, B) \
+    tcg_gen_addi_i32(S, TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), (B))
+# define tcg_gen_ext_i32_ptr(S, R, A) \
+    tcg_gen_mov_i32(S, TCGV_PTR_TO_NAT(R), (A))
 #else
-# define tcg_gen_ld_ptr(R, A, O) \
-    tcg_gen_ld_i64(TCGV_PTR_TO_NAT(R), (A), (O))
+# define tcg_gen_ld_ptr(S, R, A, O) \
+    tcg_gen_ld_i64(S, TCGV_PTR_TO_NAT(R), (A), (O))
 # define tcg_gen_discard_ptr(A) \
     tcg_gen_discard_i64(TCGV_PTR_TO_NAT(A))
-# define tcg_gen_add_ptr(R, A, B) \
-    tcg_gen_add_i64(TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), TCGV_PTR_TO_NAT(B))
-# define tcg_gen_addi_ptr(R, A, B) \
-    tcg_gen_addi_i64(TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), (B))
-# define tcg_gen_ext_i32_ptr(R, A) \
-    tcg_gen_ext_i32_i64(TCGV_PTR_TO_NAT(R), (A))
+# define tcg_gen_add_ptr(S, R, A, B) \
+    tcg_gen_add_i64(S, TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), TCGV_PTR_TO_NAT(B))
+# define tcg_gen_addi_ptr(S, R, A, B) \
+    tcg_gen_addi_i64(S, TCGV_PTR_TO_NAT(R), TCGV_PTR_TO_NAT(A), (B))
+# define tcg_gen_ext_i32_ptr(S, R, A) \
+    tcg_gen_ext_i32_i64(S, TCGV_PTR_TO_NAT(R), (A))
 #endif /* UINTPTR_MAX == UINT32_MAX */

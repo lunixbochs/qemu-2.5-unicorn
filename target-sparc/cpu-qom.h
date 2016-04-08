@@ -29,12 +29,12 @@
 #define TYPE_SPARC_CPU "sparc-cpu"
 #endif
 
-#define SPARC_CPU_CLASS(klass) \
-    OBJECT_CLASS_CHECK(SPARCCPUClass, (klass), TYPE_SPARC_CPU)
-#define SPARC_CPU(obj) \
-    OBJECT_CHECK(SPARCCPU, (obj), TYPE_SPARC_CPU)
-#define SPARC_CPU_GET_CLASS(obj) \
-    OBJECT_GET_CLASS(SPARCCPUClass, (obj), TYPE_SPARC_CPU)
+#define SPARC_CPU_CLASS(uc, klass) \
+    OBJECT_CLASS_CHECK(uc, SPARCCPUClass, (klass), TYPE_SPARC_CPU)
+#define SPARC_CPU(uc, obj) \
+    OBJECT_CHECK(uc, SPARCCPU, (obj), TYPE_SPARC_CPU)
+#define SPARC_CPU_GET_CLASS(uc, obj) \
+    OBJECT_GET_CLASS(uc, SPARCCPUClass, (obj), TYPE_SPARC_CPU)
 
 /**
  * SPARCCPUClass:

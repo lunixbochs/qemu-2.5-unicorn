@@ -20,16 +20,9 @@
 #include "qemu-common.h"
 #include "qom/cpu.h"
 
-uintptr_t qemu_real_host_page_size;
-intptr_t qemu_real_host_page_mask;
-
-#ifndef CONFIG_USER_ONLY
 /* mask must never be zero, except for A20 change call */
 static void tcg_handle_interrupt(CPUState *cpu, int mask)
 {
-    int old_mask;
-
-    old_mask = cpu->interrupt_request;
     cpu->interrupt_request |= mask;
 
     /*
@@ -41,16 +34,7 @@ static void tcg_handle_interrupt(CPUState *cpu, int mask)
         return;
     }
 
-    if (use_icount) {
-        cpu->icount_decr.u16.high = 0xffff;
-        if (!cpu->can_do_io
-            && (mask & ~old_mask) != 0) {
-            cpu_abort(cpu, "Raised interrupt while not in I/O function");
-        }
-    } else {
-        cpu->tcg_exit_req = 1;
-    }
+    cpu->tcg_exit_req = 1;
 }
 
 CPUInterruptHandler cpu_interrupt_handler = tcg_handle_interrupt;
-#endif

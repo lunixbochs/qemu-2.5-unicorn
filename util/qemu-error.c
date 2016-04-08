@@ -168,36 +168,8 @@ const char *error_get_progname(void)
  */
 static void error_print_loc(void)
 {
-    const char *sep = "";
-    int i;
-    const char *const *argp;
-
-    if (!cur_mon && progname) {
-        fprintf(stderr, "%s:", progname);
-        sep = " ";
-    }
-    switch (cur_loc->kind) {
-    case LOC_CMDLINE:
-        argp = cur_loc->ptr;
-        for (i = 0; i < cur_loc->num; i++) {
-            error_printf("%s%s", sep, argp[i]);
-            sep = " ";
-        }
-        error_printf(": ");
-        break;
-    case LOC_FILE:
-        error_printf("%s:", (const char *)cur_loc->ptr);
-        if (cur_loc->num) {
-            error_printf("%d:", cur_loc->num);
-        }
-        error_printf(" ");
-        break;
-    default:
-        error_printf("%s", sep);
-    }
 }
 
-bool enable_timestamp_msg;
 /*
  * Print an error message to current monitor if we have one, else to stderr.
  * Format arguments like vsprintf().  The result should not contain

@@ -56,7 +56,7 @@ static int check_exception(CPUX86State *env, int intno, int *error_code)
 
         qemu_log_mask(CPU_LOG_RESET, "Triple fault\n");
 
-        qemu_system_reset_request();
+        qemu_system_reset_request(env->uc);
         return EXCP_HLT;
     }
 #endif
@@ -97,7 +97,7 @@ static void QEMU_NORETURN raise_interrupt2(CPUX86State *env, int intno,
         cpu_svm_check_intercept_param(env, SVM_EXIT_SWINT, 0);
     }
 
-    cs->exception_index = intno;
+    cs->exception_index = intno;    // qq
     env->error_code = error_code;
     env->exception_is_int = is_int;
     env->exception_next_eip = env->eip + next_eip_addend;

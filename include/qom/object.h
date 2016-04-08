@@ -33,6 +33,8 @@ typedef struct TypeInfo TypeInfo;
 typedef struct InterfaceClass InterfaceClass;
 typedef struct InterfaceInfo InterfaceInfo;
 
+struct uc_struct;
+
 #define TYPE_OBJECT "object"
 
 /**
@@ -297,7 +299,12 @@ typedef struct InterfaceInfo InterfaceInfo;
  *
  * Called when trying to get/set a property.
  */
-typedef void (ObjectPropertyAccessor)(Object *obj,
+typedef void (ObjectPropertyAccessor)(struct uc_struct *uc, Object *obj,
+                                      struct Visitor *v,
+                                      void *opaque,
+                                      const char *name,
+                                      Error **errp);
+typedef int (ObjectPropertySetAccessor)(struct uc_struct *uc, Object *obj,
                                       struct Visitor *v,
                                       void *opaque,
                                       const char *name,
@@ -318,7 +325,7 @@ typedef void (ObjectPropertyAccessor)(Object *obj,
  * returns the #Object corresponding to "@path/@part".
  * If "@path/@part" is not a valid object path, it returns #NULL.
  */
-typedef Object *(ObjectPropertyResolve)(Object *obj,
+typedef Object *(ObjectPropertyResolve)(struct uc_struct *uc, Object *obj,
                                         void *opaque,
                                         const char *part);
 
@@ -330,7 +337,7 @@ typedef Object *(ObjectPropertyResolve)(Object *obj,
  *
  * Called when a property is removed from a object.
  */
-typedef void (ObjectPropertyRelease)(Object *obj,
+typedef void (ObjectPropertyRelease)(struct uc_struct *uc, Object *obj,
                                      const char *name,
                                      void *opaque);
 
@@ -340,7 +347,7 @@ typedef struct ObjectProperty
     gchar *type;
     gchar *description;
     ObjectPropertyAccessor *get;
-    ObjectPropertyAccessor *set;
+    ObjectPropertySetAccessor *set;
     ObjectPropertyResolve *resolve;
     ObjectPropertyRelease *release;
     void *opaque;
@@ -353,7 +360,7 @@ typedef struct ObjectProperty
  * Called when an object is being removed from the QOM composition tree.
  * The function should remove any backlinks from children objects to @obj.
  */
-typedef void (ObjectUnparent)(Object *obj);
+typedef void (ObjectUnparent)(struct uc_struct *uc, Object *obj);
 
 /**
  * ObjectFree:
@@ -450,18 +457,24 @@ struct TypeInfo
     const char *name;
     const char *parent;
 
-    size_t instance_size;
-    void (*instance_init)(Object *obj);
-    void (*instance_post_init)(Object *obj);
-    void (*instance_finalize)(Object *obj);
-
-    bool abstract;
     size_t class_size;
+    size_t instance_size;
+    void *instance_userdata;
 
-    void (*class_init)(ObjectClass *klass, void *data);
+    void (*instance_init)(struct uc_struct *uc, Object *obj, void *opaque);
+    void (*instance_post_init)(struct uc_struct *uc, Object *obj);
+    void (*instance_finalize)(struct uc_struct *uc, Object *obj, void *opaque);
+
+    void *class_data;
+
+    void (*class_init)(struct uc_struct *uc, ObjectClass *klass, void *data);
     void (*class_base_init)(ObjectClass *klass, void *data);
     void (*class_finalize)(ObjectClass *klass, void *data);
-    void *class_data;
+
+    bool abstract;
+
+    void *parent_type;
+    ObjectClass *class;
 
     InterfaceInfo *interfaces;
 };
@@ -499,8 +512,8 @@ struct TypeInfo
  * If an invalid object is passed to this function, a run time assert will be
  * generated.
  */
-#define OBJECT_CHECK(type, obj, name) \
-    ((type *)object_dynamic_cast_assert(OBJECT(obj), (name), \
+#define OBJECT_CHECK(uc, type, obj, name) \
+    ((type *)object_dynamic_cast_assert(uc, OBJECT(obj), (name), \
                                         __FILE__, __LINE__, __func__))
 
 /**
@@ -527,8 +540,8 @@ struct TypeInfo
  * used by each type to provide a type safe macro to get a specific class type
  * from an object.
  */
-#define OBJECT_GET_CLASS(class, obj, name) \
-    OBJECT_CLASS_CHECK(class, object_get_class(OBJECT(obj)), name)
+#define OBJECT_GET_CLASS(uc, class, obj, name) \
+    OBJECT_CLASS_CHECK(uc, class, object_get_class(OBJECT(obj)), name)
 
 /**
  * InterfaceInfo:
@@ -562,8 +575,8 @@ struct InterfaceClass
  * @klass: class to cast from
  * Returns: An #InterfaceClass or raise an error if cast is invalid
  */
-#define INTERFACE_CLASS(klass) \
-    OBJECT_CLASS_CHECK(InterfaceClass, klass, TYPE_INTERFACE)
+#define INTERFACE_CLASS(uc, klass) \
+    OBJECT_CLASS_CHECK(uc, InterfaceClass, klass, TYPE_INTERFACE)
 
 /**
  * INTERFACE_CHECK:
@@ -573,8 +586,8 @@ struct InterfaceClass
  *
  * Returns: @obj casted to @interface if cast is valid, otherwise raise error.
  */
-#define INTERFACE_CHECK(interface, obj, name) \
-    ((interface *)object_dynamic_cast_assert(OBJECT((obj)), (name), \
+#define INTERFACE_CHECK(uc, interface, obj, name) \
+    ((interface *)object_dynamic_cast_assert(uc, OBJECT((obj)), (name), \
                                              __FILE__, __LINE__, __func__))
 
 /**
@@ -751,7 +764,7 @@ void object_initialize_with_type(void *data, size_t size, Type type);
  * have already been allocated.  The returned object has a reference count of 1,
  * and will be finalized when the last reference is dropped.
  */
-void object_initialize(void *obj, size_t size, const char *typename);
+void object_initialize(struct uc_struct *uc, void *obj, size_t size, const char *typename);
 
 /**
  * object_dynamic_cast:
@@ -763,7 +776,7 @@ void object_initialize(void *obj, size_t size, const char *typename);
  *
  * Returns: This function returns @obj on success or #NULL on failure.
  */
-Object *object_dynamic_cast(Object *obj, const char *typename);
+Object *object_dynamic_cast(struct uc_struct *uc, Object *obj, const char *typename);
 
 /**
  * object_dynamic_cast_assert:
@@ -774,7 +787,7 @@ Object *object_dynamic_cast(Object *obj, const char *typename);
  * This function is not meant to be called directly, but only through
  * the wrapper macro OBJECT_CHECK.
  */
-Object *object_dynamic_cast_assert(Object *obj, const char *typename,
+Object *object_dynamic_cast_assert(struct uc_struct *uc, Object *obj, const char *typename,
                                    const char *file, int line, const char *func);
 
 /**
@@ -802,7 +815,7 @@ const char *object_get_typename(Object *obj);
  *
  * Returns: 0 on failure, the new #Type on success.
  */
-Type type_register_static(const TypeInfo *info);
+Type type_register_static(struct uc_struct *uc, const TypeInfo *info);
 
 /**
  * type_register:
@@ -813,7 +826,7 @@ Type type_register_static(const TypeInfo *info);
  *
  * Returns: 0 on failure, the new #Type on success.
  */
-Type type_register(const TypeInfo *info);
+Type type_register(struct uc_struct *uc, const TypeInfo *info);
 
 /**
  * object_class_dynamic_cast_assert:
@@ -826,7 +839,7 @@ Type type_register(const TypeInfo *info);
  * enabled.  This function is not meant to be called directly, but only through
  * the wrapper macros OBJECT_CLASS_CHECK and INTERFACE_CHECK.
  */
-ObjectClass *object_class_dynamic_cast_assert(ObjectClass *klass,
+ObjectClass *object_class_dynamic_cast_assert(struct uc_struct *uc, ObjectClass *klass,
                                               const char *typename,
                                               const char *file, int line,
                                               const char *func);
@@ -845,7 +858,7 @@ ObjectClass *object_class_dynamic_cast_assert(ObjectClass *klass,
  * classes or interfaces on the hierarchy leading to @klass implement
  * it.  (FIXME: perhaps this can be detected at type definition time?)
  */
-ObjectClass *object_class_dynamic_cast(ObjectClass *klass,
+ObjectClass *object_class_dynamic_cast(struct uc_struct *uc, ObjectClass *klass,
                                        const char *typename);
 
 /**
@@ -854,7 +867,7 @@ ObjectClass *object_class_dynamic_cast(ObjectClass *klass,
  *
  * Returns: The parent for @klass or %NULL if none.
  */
-ObjectClass *object_class_get_parent(ObjectClass *klass);
+ObjectClass *object_class_get_parent(struct uc_struct *uc, ObjectClass *klass);
 
 /**
  * object_class_get_name:
@@ -878,9 +891,9 @@ bool object_class_is_abstract(ObjectClass *klass);
  *
  * Returns: The class for @typename or %NULL if not found.
  */
-ObjectClass *object_class_by_name(const char *typename);
+ObjectClass *object_class_by_name(struct uc_struct *uc, const char *typename);
 
-void object_class_foreach(void (*fn)(ObjectClass *klass, void *opaque),
+void object_class_foreach(struct uc_struct *uc, void (*fn)(ObjectClass *klass, void *opaque),
                           const char *implements_type, bool include_abstract,
                           void *opaque);
 
@@ -891,7 +904,7 @@ void object_class_foreach(void (*fn)(ObjectClass *klass, void *opaque),
  *
  * Returns: A singly-linked list of the classes in reverse hashtable order.
  */
-GSList *object_class_get_list(const char *implements_type,
+GSList *object_class_get_list(struct uc_struct *uc, const char *implements_type,
                               bool include_abstract);
 
 /**
@@ -910,7 +923,7 @@ void object_ref(Object *obj);
  * Decrease the reference count of a object.  A object cannot be freed as long
  * as its reference count is greater than zero.
  */
-void object_unref(Object *obj);
+void object_unref(struct uc_struct *uc, Object *obj);
 
 /**
  * object_property_add:
@@ -938,11 +951,11 @@ void object_unref(Object *obj);
 ObjectProperty *object_property_add(Object *obj, const char *name,
                                     const char *type,
                                     ObjectPropertyAccessor *get,
-                                    ObjectPropertyAccessor *set,
+                                    ObjectPropertySetAccessor *set,
                                     ObjectPropertyRelease *release,
                                     void *opaque, Error **errp);
 
-void object_property_del(Object *obj, const char *name, Error **errp);
+void object_property_del(struct uc_struct *uc, Object *obj, const char *name, Error **errp);
 
 /**
  * object_property_find:
@@ -1004,7 +1017,7 @@ void object_property_iter_free(ObjectPropertyIterator *iter);
  */
 ObjectProperty *object_property_iter_next(ObjectPropertyIterator *iter);
 
-void object_unparent(Object *obj);
+void object_unparent(struct uc_struct *uc, Object *obj);
 
 /**
  * object_property_get:
@@ -1016,7 +1029,7 @@ void object_unparent(Object *obj);
  *
  * Reads a property from a object.
  */
-void object_property_get(Object *obj, struct Visitor *v, const char *name,
+void object_property_get(struct uc_struct *uc, Object *obj, struct Visitor *v, const char *name,
                          Error **errp);
 
 /**
@@ -1027,7 +1040,7 @@ void object_property_get(Object *obj, struct Visitor *v, const char *name,
  *
  * Writes a string value to a property.
  */
-void object_property_set_str(Object *obj, const char *value,
+void object_property_set_str(struct uc_struct *uc, Object *obj, const char *value,
                              const char *name, Error **errp);
 
 /**
@@ -1040,7 +1053,7 @@ void object_property_set_str(Object *obj, const char *value,
  * an error occurs (including when the property value is not a string).
  * The caller should free the string.
  */
-char *object_property_get_str(Object *obj, const char *name,
+char *object_property_get_str(struct uc_struct *uc, Object *obj, const char *name,
                               Error **errp);
 
 /**
@@ -1051,7 +1064,7 @@ char *object_property_get_str(Object *obj, const char *name,
  *
  * Writes an object's canonical path to a property.
  */
-void object_property_set_link(Object *obj, Object *value,
+void object_property_set_link(struct uc_struct *uc, Object *obj, Object *value,
                               const char *name, Error **errp);
 
 /**
@@ -1064,7 +1077,7 @@ void object_property_set_link(Object *obj, Object *value,
  * or NULL if an error occurs (including when the property value is not a
  * string or not a valid object path).
  */
-Object *object_property_get_link(Object *obj, const char *name,
+Object *object_property_get_link(struct uc_struct *uc, Object *obj, const char *name,
                                  Error **errp);
 
 /**
@@ -1075,7 +1088,7 @@ Object *object_property_get_link(Object *obj, const char *name,
  *
  * Writes a bool value to a property.
  */
-void object_property_set_bool(Object *obj, bool value,
+void object_property_set_bool(struct uc_struct *uc, Object *obj, bool value,
                               const char *name, Error **errp);
 
 /**
@@ -1087,7 +1100,7 @@ void object_property_set_bool(Object *obj, bool value,
  * Returns: the value of the property, converted to a boolean, or NULL if
  * an error occurs (including when the property value is not a bool).
  */
-bool object_property_get_bool(Object *obj, const char *name,
+bool object_property_get_bool(struct uc_struct *uc, Object *obj, const char *name,
                               Error **errp);
 
 /**
@@ -1098,7 +1111,7 @@ bool object_property_get_bool(Object *obj, const char *name,
  *
  * Writes an integer value to a property.
  */
-void object_property_set_int(Object *obj, int64_t value,
+void object_property_set_int(struct uc_struct *uc, Object *obj, int64_t value,
                              const char *name, Error **errp);
 
 /**
@@ -1110,7 +1123,7 @@ void object_property_set_int(Object *obj, int64_t value,
  * Returns: the value of the property, converted to an integer, or NULL if
  * an error occurs (including when the property value is not an integer).
  */
-int64_t object_property_get_int(Object *obj, const char *name,
+int64_t object_property_get_int(struct uc_struct *uc, Object *obj, const char *name,
                                 Error **errp);
 
 /**
@@ -1138,7 +1151,7 @@ int object_property_get_enum(Object *obj, const char *name,
  * undefined if an error occurs (including when the property value is not
  * an list of integers).
  */
-void object_property_get_uint16List(Object *obj, const char *name,
+void object_property_get_uint16List(struct uc_struct *uc, Object *obj, const char *name,
                                     uint16List **list, Error **errp);
 
 /**
@@ -1152,7 +1165,7 @@ void object_property_get_uint16List(Object *obj, const char *name,
  *
  * Writes a property to a object.
  */
-void object_property_set(Object *obj, struct Visitor *v, const char *name,
+void object_property_set(struct uc_struct *uc, Object *obj, struct Visitor *v, const char *name,
                          Error **errp);
 
 /**
@@ -1164,7 +1177,7 @@ void object_property_set(Object *obj, struct Visitor *v, const char *name,
  *
  * Parses a string and writes the result into a property of an object.
  */
-void object_property_parse(Object *obj, const char *string,
+void object_property_parse(struct uc_struct *uc, Object *obj, const char *string,
                            const char *name, Error **errp);
 
 /**
@@ -1177,7 +1190,7 @@ void object_property_parse(Object *obj, const char *string,
  * Returns a string representation of the value of the property.  The
  * caller shall free the string.
  */
-char *object_property_print(Object *obj, const char *name, bool human,
+char *object_property_print(struct uc_struct *uc, Object *obj, const char *name, bool human,
                             Error **errp);
 
 /**
@@ -1196,7 +1209,7 @@ const char *object_property_get_type(Object *obj, const char *name,
  *
  * Returns: the root object of the composition tree
  */
-Object *object_get_root(void);
+Object *object_get_root(struct uc_struct *uc);
 
 
 /**
@@ -1249,7 +1262,7 @@ gchar *object_get_canonical_path(Object *obj);
  *
  * Returns: The matched object or NULL on path lookup failure.
  */
-Object *object_resolve_path(const char *path, bool *ambiguous);
+Object *object_resolve_path(struct uc_struct *uc, const char *path, bool *ambiguous);
 
 /**
  * object_resolve_path_type:
@@ -1269,7 +1282,7 @@ Object *object_resolve_path(const char *path, bool *ambiguous);
  *
  * Returns: The matched object or NULL on path lookup failure.
  */
-Object *object_resolve_path_type(const char *path, const char *typename,
+Object *object_resolve_path_type(struct uc_struct *uc, const char *path, const char *typename,
                                  bool *ambiguous);
 
 /**
@@ -1282,7 +1295,7 @@ Object *object_resolve_path_type(const char *path, const char *typename,
  *
  * Returns: The resolved object or NULL on path lookup failure.
  */
-Object *object_resolve_path_component(Object *parent, const gchar *part);
+Object *object_resolve_path_component(struct uc_struct *uc, Object *parent, const gchar *part);
 
 /**
  * object_property_add_child:
@@ -1367,8 +1380,8 @@ void object_property_add_link(Object *obj, const char *name,
  * property of type 'string'.
  */
 void object_property_add_str(Object *obj, const char *name,
-                             char *(*get)(Object *, Error **),
-                             void (*set)(Object *, const char *, Error **),
+                             char *(*get)(struct uc_struct *uc, Object *, Error **),
+                             int (*set)(struct uc_struct *uc, Object *, const char *, Error **),
                              Error **errp);
 
 /**
@@ -1382,9 +1395,9 @@ void object_property_add_str(Object *obj, const char *name,
  * Add a bool property using getters/setters.  This function will add a
  * property of type 'bool'.
  */
-void object_property_add_bool(Object *obj, const char *name,
-                              bool (*get)(Object *, Error **),
-                              void (*set)(Object *, bool, Error **),
+void object_property_add_bool(struct uc_struct *uc, Object *obj, const char *name,
+                              bool (*get)(struct uc_struct *uc, Object *, Error **),
+                              int (*set)(struct uc_struct *uc, Object *, bool, Error **),
                               Error **errp);
 
 /**
@@ -1568,7 +1581,10 @@ int object_child_foreach_recursive(Object *obj,
  *
  * Returns: the container object.
  */
-Object *container_get(Object *root, const char *path);
+Object *container_get(struct uc_struct *uc, Object *root, const char *path);
 
+void container_register_types(struct uc_struct *uc);
+
+void register_types_object(struct uc_struct *uc);
 
 #endif

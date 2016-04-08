@@ -2301,21 +2301,21 @@ static void tcg_target_init(TCGContext *s)
 {
     query_facilities();
 
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffff);
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffff);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffff);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffff);
 
-    tcg_regset_clear(tcg_target_call_clobber_regs);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R0);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R1);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R2);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R3);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R4);
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R5);
+    tcg_regset_clear(s->tcg_target_call_clobber_regs);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R0);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R1);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R2);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R3);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R4);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R5);
     /* The r6 register is technically call-saved, but it's also a parameter
        register, so it can get killed by setup for the qemu_st helper.  */
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R6);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R6);
     /* The return register can be considered call-clobbered.  */
-    tcg_regset_set_reg(tcg_target_call_clobber_regs, TCG_REG_R14);
+    tcg_regset_set_reg(s->tcg_target_call_clobber_regs, TCG_REG_R14);
 
     tcg_regset_clear(s->reserved_regs);
     tcg_regset_set_reg(s->reserved_regs, TCG_TMP0);
@@ -2323,7 +2323,7 @@ static void tcg_target_init(TCGContext *s)
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_R0);
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_CALL_STACK);
 
-    tcg_add_target_add_op_defs(s390_op_defs);
+    tcg_add_target_add_op_defs(s, s390_op_defs);
 }
 
 #define FRAME_SIZE  ((int)(TCG_TARGET_CALL_STACK_OFFSET          \
@@ -2363,47 +2363,4 @@ static void tcg_target_qemu_prologue(TCGContext *s)
     tcg_out_insn(s, RR, BCR, S390_CC_ALWAYS, TCG_REG_R14);
 }
 
-typedef struct {
-    DebugFrameHeader h;
-    uint8_t fde_def_cfa[4];
-    uint8_t fde_reg_ofs[18];
-} DebugFrame;
-
-/* We're expecting a 2 byte uleb128 encoded value.  */
-QEMU_BUILD_BUG_ON(FRAME_SIZE >= (1 << 14));
-
 #define ELF_HOST_MACHINE  EM_S390
-
-static const DebugFrame debug_frame = {
-    .h.cie.len = sizeof(DebugFrameCIE)-4, /* length after .len member */
-    .h.cie.id = -1,
-    .h.cie.version = 1,
-    .h.cie.code_align = 1,
-    .h.cie.data_align = 8,                /* sleb128 8 */
-    .h.cie.return_column = TCG_REG_R14,
-
-    /* Total FDE size does not include the "len" member.  */
-    .h.fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, h.fde.cie_offset),
-
-    .fde_def_cfa = {
-        12, TCG_REG_CALL_STACK,         /* DW_CFA_def_cfa %r15, ... */
-        (FRAME_SIZE & 0x7f) | 0x80,     /* ... uleb128 FRAME_SIZE */
-        (FRAME_SIZE >> 7)
-    },
-    .fde_reg_ofs = {
-        0x86, 6,                        /* DW_CFA_offset, %r6, 48 */
-        0x87, 7,                        /* DW_CFA_offset, %r7, 56 */
-        0x88, 8,                        /* DW_CFA_offset, %r8, 64 */
-        0x89, 9,                        /* DW_CFA_offset, %r92, 72 */
-        0x8a, 10,                       /* DW_CFA_offset, %r10, 80 */
-        0x8b, 11,                       /* DW_CFA_offset, %r11, 88 */
-        0x8c, 12,                       /* DW_CFA_offset, %r12, 96 */
-        0x8d, 13,                       /* DW_CFA_offset, %r13, 104 */
-        0x8e, 14,                       /* DW_CFA_offset, %r14, 112 */
-    }
-};
-
-void tcg_register_jit(void *buf, size_t buf_size)
-{
-    tcg_register_jit_int(buf, buf_size, &debug_frame, sizeof(debug_frame));
-}

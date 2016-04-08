@@ -20,12 +20,12 @@ static const TypeInfo container_info = {
     .parent        = TYPE_OBJECT,
 };
 
-static void container_register_types(void)
+void container_register_types(struct uc_struct *uc)
 {
-    type_register_static(&container_info);
+    type_register_static(uc, &container_info);
 }
 
-Object *container_get(Object *root, const char *path)
+Object *container_get(struct uc_struct *uc, Object *root, const char *path)
 {
     Object *obj, *child;
     gchar **parts;
@@ -36,9 +36,9 @@ Object *container_get(Object *root, const char *path)
     obj = root;
 
     for (i = 1; parts[i] != NULL; i++, obj = child) {
-        child = object_resolve_path_component(obj, parts[i]);
+        child = object_resolve_path_component(uc, obj, parts[i]);
         if (!child) {
-            child = object_new("container");
+            child = object_new(uc, "container");
             object_property_add_child(obj, parts[i], child, NULL);
         }
     }
@@ -47,6 +47,3 @@ Object *container_get(Object *root, const char *path)
 
     return obj;
 }
-
-
-type_init(container_register_types)

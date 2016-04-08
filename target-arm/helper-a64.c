@@ -18,7 +18,6 @@
  */
 
 #include "cpu.h"
-#include "exec/gdbstub.h"
 #include "exec/helper-proto.h"
 #include "qemu/host-utils.h"
 #include "sysemu/sysemu.h"
@@ -430,7 +429,8 @@ uint64_t HELPER(crc32_64)(uint64_t acc, uint64_t val, uint32_t bytes)
     stq_le_p(buf, val);
 
     /* zlib crc32 converts the accumulator and output to one's complement.  */
-    return crc32(acc ^ 0xffffffff, buf, bytes) ^ 0xffffffff;
+    // return crc32(acc ^ 0xffffffff, buf, bytes) ^ 0xffffffff;
+	return 0;	// FIXME
 }
 
 uint64_t HELPER(crc32c_64)(uint64_t acc, uint64_t val, uint32_t bytes)

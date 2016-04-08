@@ -1,4 +1,4 @@
-# Makefile for QEMU.
+# Makefile for QEMU - modified for Unicorn engine.
 
 # Always point to the root of the build tree (needs GNU make).
 BUILD_DIR=$(CURDIR)
@@ -645,6 +645,3 @@ ifneq ($(filter-out $(UNCHECKED_GOALS),$(MAKECMDGOALS)),$(if $(MAKECMDGOALS),,fa
 Makefile: $(GENERATED_HEADERS)
 endif
 
-# Include automatically generated dependency files
-# Dependencies in Makefile.objs files come from our recursive subdir rules
--include $(wildcard *.d tests/*.d)

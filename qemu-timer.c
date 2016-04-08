@@ -39,6 +39,8 @@
 #include <sys/prctl.h>
 #endif
 
+#include "uc_priv.h"
+
 /***********************************************************/
 /* timers */
 
@@ -53,7 +55,6 @@ typedef struct QEMUClock {
     bool enabled;
 } QEMUClock;
 
-QEMUTimerListGroup main_loop_tlg;
 static QEMUClock qemu_clocks[QEMU_CLOCK_MAX];
 
 /* A QEMUTimerList is a list of timers attached to a clock. More
@@ -346,11 +347,6 @@ void timer_deinit(QEMUTimer *ts)
     ts->timer_list = NULL;
 }
 
-void timer_free(QEMUTimer *ts)
-{
-    g_free(ts);
-}
-
 static void timer_del_locked(QEMUTimerList *timer_list, QEMUTimer *ts)
 {
     QEMUTimer **pt, *t;
@@ -393,7 +389,6 @@ static bool timer_mod_ns_locked(QEMUTimerList *timer_list,
 static void timerlist_rearm(QEMUTimerList *timer_list)
 {
     /* Interrupt execution to force deadline recalculation.  */
-    qemu_clock_warp(timer_list->clock->type);
     timerlist_notify(timer_list);
 }
 

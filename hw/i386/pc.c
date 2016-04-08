@@ -1972,14 +1972,11 @@ static const TypeInfo pc_machine_info = {
     .class_size = sizeof(PCMachineClass),
     .class_init = pc_machine_class_init,
     .interfaces = (InterfaceInfo[]) {
-         { TYPE_HOTPLUG_HANDLER },
          { }
     },
 };
 
-static void pc_machine_register_types(void)
+void pc_machine_register_types(struct uc_struct *uc)
 {
-    type_register_static(&pc_machine_info);
+    type_register_static(uc, &pc_machine_info);
 }
-
-type_init(pc_machine_register_types)

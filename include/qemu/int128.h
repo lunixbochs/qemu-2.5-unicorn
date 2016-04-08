@@ -1,7 +1,7 @@
 #ifndef INT128_H
 #define INT128_H
 
-#include <assert.h>
+//#include <assert.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -19,7 +19,7 @@ static inline Int128 int128_make64(uint64_t a)
 
 static inline uint64_t int128_get64(Int128 a)
 {
-    assert(!a.hi);
+    //assert(!a.hi);
     return a.lo;
 }
 

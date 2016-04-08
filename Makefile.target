@@ -34,50 +34,11 @@ endif
 endif
 
 PROGS=$(QEMU_PROG) $(QEMU_PROGW)
-STPFILES=
 
 config-target.h: config-target.h-timestamp
 config-target.h-timestamp: config-target.mak
 
-ifdef CONFIG_TRACE_SYSTEMTAP
-stap: $(QEMU_PROG).stp-installed $(QEMU_PROG).stp $(QEMU_PROG)-simpletrace.stp
-
-ifdef CONFIG_USER_ONLY
-TARGET_TYPE=user
-else
-TARGET_TYPE=system
-endif
-
-$(QEMU_PROG).stp-installed: $(SRC_PATH)/trace-events
-	$(call quiet-command,$(TRACETOOL) \
-		--format=stap \
-		--backends=$(TRACE_BACKENDS) \
-		--binary=$(bindir)/$(QEMU_PROG) \
-		--target-name=$(TARGET_NAME) \
-		--target-type=$(TARGET_TYPE) \
-		< $< > $@,"  GEN   $(TARGET_DIR)$(QEMU_PROG).stp-installed")
-
-$(QEMU_PROG).stp: $(SRC_PATH)/trace-events
-	$(call quiet-command,$(TRACETOOL) \
-		--format=stap \
-		--backends=$(TRACE_BACKENDS) \
-		--binary=$(realpath .)/$(QEMU_PROG) \
-		--target-name=$(TARGET_NAME) \
-		--target-type=$(TARGET_TYPE) \
-		< $< > $@,"  GEN   $(TARGET_DIR)$(QEMU_PROG).stp")
-
-$(QEMU_PROG)-simpletrace.stp: $(SRC_PATH)/trace-events
-	$(call quiet-command,$(TRACETOOL) \
-		--format=simpletrace-stap \
-		--backends=$(TRACE_BACKENDS) \
-		--probe-prefix=qemu.$(TARGET_TYPE).$(TARGET_NAME) \
-		< $< > $@,"  GEN   $(TARGET_DIR)$(QEMU_PROG)-simpletrace.stp")
-
-else
-stap:
-endif
-
-all: $(PROGS) stap
+all: $(PROGS)
 
 # Dummy command so that make thinks it has done something
 	@true

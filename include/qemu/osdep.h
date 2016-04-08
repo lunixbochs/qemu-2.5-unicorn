@@ -221,22 +221,6 @@ int qemu_close(int fd);
 int qemu_create_pidfile(const char *filename);
 int qemu_get_thread_id(void);
 
-#ifndef CONFIG_IOVEC
-struct iovec {
-    void *iov_base;
-    size_t iov_len;
-};
-/*
- * Use the same value as Linux for now.
- */
-#define IOV_MAX 1024
-
-ssize_t readv(int fd, const struct iovec *iov, int iov_cnt);
-ssize_t writev(int fd, const struct iovec *iov, int iov_cnt);
-#else
-#include <sys/uio.h>
-#endif
-
 #ifdef _WIN32
 static inline void qemu_timersub(const struct timeval *val1,
                                  const struct timeval *val2,
@@ -276,11 +260,6 @@ bool fips_get_state(void);
  * after use.
  */
 char *qemu_get_local_state_pathname(const char *relative_pathname);
-
-/* Find program directory, and save it for later usage with
- * qemu_get_exec_dir().
- * Try OS specific API first, if not working, parse from argv0. */
-void qemu_init_exec_dir(const char *argv0);
 
 /* Get the saved exec dir.
  * Caller needs to release the returned string by g_free() */

@@ -26,15 +26,9 @@
 /* Get the root memory region.  This interface should only be used temporarily
  * until a proper bus interface is available.
  */
-MemoryRegion *get_system_memory(void);
-
-/* Get the root I/O port region.  This interface should only be used
- * temporarily until a proper bus interface is available.
- */
-MemoryRegion *get_system_io(void);
+MemoryRegion *get_system_memory(struct uc_struct *uc);
 
 extern AddressSpace address_space_memory;
-extern AddressSpace address_space_io;
 
 #endif
 

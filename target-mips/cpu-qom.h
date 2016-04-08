@@ -28,12 +28,12 @@
 #define TYPE_MIPS_CPU "mips-cpu"
 #endif
 
-#define MIPS_CPU_CLASS(klass) \
-    OBJECT_CLASS_CHECK(MIPSCPUClass, (klass), TYPE_MIPS_CPU)
-#define MIPS_CPU(obj) \
-    OBJECT_CHECK(MIPSCPU, (obj), TYPE_MIPS_CPU)
-#define MIPS_CPU_GET_CLASS(obj) \
-    OBJECT_GET_CLASS(MIPSCPUClass, (obj), TYPE_MIPS_CPU)
+#define MIPS_CPU_CLASS(uc, klass) \
+    OBJECT_CLASS_CHECK(uc, MIPSCPUClass, (klass), TYPE_MIPS_CPU)
+#define MIPS_CPU(uc, obj) \
+    OBJECT_CHECK(uc, MIPSCPU, (obj), TYPE_MIPS_CPU)
+#define MIPS_CPU_GET_CLASS(uc, obj) \
+    OBJECT_GET_CLASS(uc, MIPSCPUClass, (obj), TYPE_MIPS_CPU)
 
 /**
  * MIPSCPUClass:
@@ -80,8 +80,6 @@ extern const struct VMStateDescription vmstate_mips_cpu;
 
 void mips_cpu_do_interrupt(CPUState *cpu);
 bool mips_cpu_exec_interrupt(CPUState *cpu, int int_req);
-void mips_cpu_dump_state(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
-                         int flags);
 hwaddr mips_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
 int mips_cpu_gdb_read_register(CPUState *cpu, uint8_t *buf, int reg);
 int mips_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);

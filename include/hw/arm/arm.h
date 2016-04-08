@@ -16,6 +16,9 @@
 #include "qemu/notify.h"
 #include "cpu.h"
 
+void tosa_machine_init(struct uc_struct *uc);
+void machvirt_machine_init(struct uc_struct *uc);   // ARM64
+
 /* armv7m.c */
 DeviceState *armv7m_init(MemoryRegion *system_memory, int mem_size, int num_irq,
                       const char *kernel_filename, const char *cpu_model);
@@ -125,5 +128,8 @@ void arm_load_kernel(ARMCPU *cpu, struct arm_boot_info *info);
 /* Multiplication factor to convert from system clock ticks to qemu timer
    ticks.  */
 extern int system_clock_scale;
+
+void arm_cpu_register_types(void *opaque);
+void aarch64_cpu_register_types(void *opaque);
 
 #endif /* !ARM_MISC_H */

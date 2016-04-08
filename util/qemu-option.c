@@ -27,7 +27,6 @@
 #include <string.h>
 
 #include "qemu-common.h"
-#include "qemu/error-report.h"
 #include "qapi/qmp/types.h"
 #include "qapi/error.h"
 #include "qapi/qmp/qerror.h"
@@ -668,7 +667,6 @@ QemuOpts *qemu_opts_create(QemuOptsList *list, const char *id,
     opts = g_malloc0(sizeof(*opts));
     opts->id = g_strdup(id);
     opts->list = list;
-    loc_save(&opts->loc);
     QTAILQ_INIT(&opts->head);
     QTAILQ_INSERT_TAIL(&list->head, opts, next);
     return opts;

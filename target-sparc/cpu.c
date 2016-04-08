@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "qemu/error-report.h"
+#include "hw/sparc/sparc.h"
 
 //#define DEBUG_FEATURES
 
@@ -27,8 +27,8 @@ static int cpu_sparc_find_by_name(sparc_def_t *cpu_def, const char *cpu_model);
 /* CPUClass::reset() */
 static void sparc_cpu_reset(CPUState *s)
 {
-    SPARCCPU *cpu = SPARC_CPU(s);
-    SPARCCPUClass *scc = SPARC_CPU_GET_CLASS(cpu);
+    SPARCCPU *cpu = SPARC_CPU(s->uc, s);
+    SPARCCPUClass *scc = SPARC_CPU_GET_CLASS(s->uc, cpu);
     CPUSPARCState *env = &cpu->env;
 
     scc->parent_reset(s);
@@ -73,7 +73,7 @@ static void sparc_cpu_reset(CPUState *s)
 static bool sparc_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
     if (interrupt_request & CPU_INTERRUPT_HARD) {
-        SPARCCPU *cpu = SPARC_CPU(cs);
+        SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
         CPUSPARCState *env = &cpu->env;
 
         if (cpu_interrupts_enabled(env) && env->interrupt_index > 0) {
@@ -98,9 +98,9 @@ static void cpu_sparc_disas_set_info(CPUState *cpu, disassemble_info *info)
 #endif
 }
 
-static int cpu_sparc_register(SPARCCPU *cpu, const char *cpu_model)
+static int cpu_sparc_register(struct uc_struct *uc, SPARCCPU *cpu, const char *cpu_model)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(uc, cpu);
     CPUSPARCState *env = &cpu->env;
     char *s = g_strdup(cpu_model);
     char *featurestr, *name = strtok(s, ",");
@@ -139,18 +139,18 @@ static int cpu_sparc_register(SPARCCPU *cpu, const char *cpu_model)
     return 0;
 }
 
-SPARCCPU *cpu_sparc_init(const char *cpu_model)
+SPARCCPU *cpu_sparc_init(struct uc_struct *uc, const char *cpu_model)
 {
     SPARCCPU *cpu;
 
-    cpu = SPARC_CPU(object_new(TYPE_SPARC_CPU));
+    cpu = SPARC_CPU(uc, object_new(uc, TYPE_SPARC_CPU));
 
-    if (cpu_sparc_register(cpu, cpu_model) < 0) {
-        object_unref(OBJECT(cpu));
+    if (cpu_sparc_register(uc, cpu, cpu_model) < 0) {
+        object_unref(uc, OBJECT(cpu));
         return NULL;
     }
 
-    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
+    object_property_set_bool(uc, OBJECT(cpu), true, "realized", NULL);
 
     return cpu;
 }
@@ -518,6 +518,7 @@ static const char * const feature_name[] = {
     "gl",
 };
 
+#if 0
 static void print_features(FILE *f, fprintf_function cpu_fprintf,
                            uint32_t features, const char *prefix)
 {
@@ -532,6 +533,7 @@ static void print_features(FILE *f, fprintf_function cpu_fprintf,
         }
     }
 }
+#endif
 
 static void add_flagname_to_bitmaps(const char *flagname, uint32_t *features)
 {
@@ -543,7 +545,7 @@ static void add_flagname_to_bitmaps(const char *flagname, uint32_t *features)
             return;
         }
     }
-    error_report("CPU feature %s not found", flagname);
+    //error_report("CPU feature %s not found", flagname);
 }
 
 static int cpu_sparc_find_by_name(sparc_def_t *cpu_def, const char *name)
@@ -566,7 +568,7 @@ static int cpu_sparc_find_by_name(sparc_def_t *cpu_def, const char *name)
 static void sparc_cpu_parse_features(CPUState *cs, char *features,
                                      Error **errp)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
     sparc_def_t *cpu_def = cpu->env.def;
     char *featurestr;
     uint32_t plus_features = 0;
@@ -651,6 +653,7 @@ static void sparc_cpu_parse_features(CPUState *cs, char *features,
 #endif
 }
 
+#if 0
 void sparc_cpu_list(FILE *f, fprintf_function cpu_fprintf)
 {
     unsigned int i;
@@ -760,10 +763,11 @@ void sparc_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
 #endif
     cpu_fprintf(f, "\n");
 }
+#endif
 
 static void sparc_cpu_set_pc(CPUState *cs, vaddr value)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
 
     cpu->env.pc = value;
     cpu->env.npc = value + 4;
@@ -771,7 +775,7 @@ static void sparc_cpu_set_pc(CPUState *cs, vaddr value)
 
 static void sparc_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
 
     cpu->env.pc = tb->pc;
     cpu->env.npc = tb->cs_base;
@@ -779,18 +783,18 @@ static void sparc_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
 
 static bool sparc_cpu_has_work(CPUState *cs)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
     CPUSPARCState *env = &cpu->env;
 
     return (cs->interrupt_request & CPU_INTERRUPT_HARD) &&
            cpu_interrupts_enabled(env);
 }
 
-static void sparc_cpu_realizefn(DeviceState *dev, Error **errp)
+static int sparc_cpu_realizefn(struct uc_struct *uc, DeviceState *dev, Error **errp)
 {
-    SPARCCPUClass *scc = SPARC_CPU_GET_CLASS(dev);
+    SPARCCPUClass *scc = SPARC_CPU_GET_CLASS(uc, dev);
 #if defined(CONFIG_USER_ONLY)
-    SPARCCPU *cpu = SPARC_CPU(dev);
+    SPARCCPU *cpu = SPARC_CPU(uc, dev);
     CPUSPARCState *env = &cpu->env;
 
     if ((env->def->features & CPU_FEATURE_FLOAT)) {
@@ -841,14 +845,12 @@ static void sparc_cpu_class_init(ObjectClass *oc, void *data)
     cc->has_work = sparc_cpu_has_work;
     cc->do_interrupt = sparc_cpu_do_interrupt;
     cc->cpu_exec_interrupt = sparc_cpu_exec_interrupt;
-    cc->dump_state = sparc_cpu_dump_state;
+    //cc->dump_state = sparc_cpu_dump_state;
 #if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
     cc->memory_rw_debug = sparc_cpu_memory_rw_debug;
 #endif
     cc->set_pc = sparc_cpu_set_pc;
     cc->synchronize_from_tb = sparc_cpu_synchronize_from_tb;
-    cc->gdb_read_register = sparc_cpu_gdb_read_register;
-    cc->gdb_write_register = sparc_cpu_gdb_write_register;
 #ifdef CONFIG_USER_ONLY
     cc->handle_mmu_fault = sparc_cpu_handle_mmu_fault;
 #else

@@ -3,6 +3,5 @@
 
 #include "hw/hw.h"
 #include "hw/qdev-core.h"
-#include "hw/qdev-properties.h"
 
 #endif

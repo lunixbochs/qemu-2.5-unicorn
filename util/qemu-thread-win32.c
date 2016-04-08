@@ -17,15 +17,8 @@
 #include <assert.h>
 #include <limits.h>
 
-static bool name_threads;
+#include "uc_priv.h"
 
-void qemu_thread_naming(bool enable)
-{
-    /* But note we don't actually name them on Windows yet */
-    name_threads = enable;
-
-    fprintf(stderr, "qemu: thread naming not supported on this host\n");
-}
 
 static void error_exit(int err, const char *msg)
 {
@@ -35,7 +28,7 @@ static void error_exit(int err, const char *msg)
                   NULL, err, 0, (LPTSTR)&pstr, 2, NULL);
     fprintf(stderr, "qemu: %s: %s\n", msg, pstr);
     LocalFree(pstr);
-    abort();
+    //abort();
 }
 
 void qemu_mutex_init(QemuMutex *mutex)
@@ -419,7 +412,7 @@ void *qemu_thread_join(QemuThread *thread)
     return ret;
 }
 
-void qemu_thread_create(QemuThread *thread, const char *name,
+int qemu_thread_create(struct uc_struct *uc, QemuThread *thread, const char *name,
                        void *(*start_routine)(void *),
                        void *arg, int mode)
 {

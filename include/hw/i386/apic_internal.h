@@ -125,12 +125,12 @@
 typedef struct APICCommonState APICCommonState;
 
 #define TYPE_APIC_COMMON "apic-common"
-#define APIC_COMMON(obj) \
-     OBJECT_CHECK(APICCommonState, (obj), TYPE_APIC_COMMON)
-#define APIC_COMMON_CLASS(klass) \
-     OBJECT_CLASS_CHECK(APICCommonClass, (klass), TYPE_APIC_COMMON)
-#define APIC_COMMON_GET_CLASS(obj) \
-     OBJECT_GET_CLASS(APICCommonClass, (obj), TYPE_APIC_COMMON)
+#define APIC_COMMON(uc, obj) \
+     OBJECT_CHECK(uc, APICCommonState, (obj), TYPE_APIC_COMMON)
+#define APIC_COMMON_CLASS(uc, klass) \
+     OBJECT_CLASS_CHECK(uc, APICCommonClass, (klass), TYPE_APIC_COMMON)
+#define APIC_COMMON_GET_CLASS(uc, obj) \
+     OBJECT_GET_CLASS(uc, APICCommonClass, (obj), TYPE_APIC_COMMON)
 
 typedef struct APICCommonClass
 {
@@ -196,10 +196,8 @@ typedef struct VAPICState {
 
 extern bool apic_report_tpr_access;
 
-void apic_report_irq_delivered(int delivered);
 bool apic_next_timer(APICCommonState *s, int64_t current_time);
-void apic_enable_tpr_access_reporting(DeviceState *d, bool enable);
-void apic_enable_vapic(DeviceState *d, hwaddr paddr);
+void apic_enable_vapic(struct uc_struct *uc, DeviceState *d, hwaddr paddr);
 
 void vapic_report_tpr_access(DeviceState *dev, CPUState *cpu, target_ulong ip,
                              TPRAccess access);

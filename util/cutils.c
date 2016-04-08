@@ -27,9 +27,6 @@
 #include <limits.h>
 #include <errno.h>
 
-#include "qemu/sockets.h"
-#include "qemu/iov.h"
-#include "net/net.h"
 
 void strpadcpy(char *buf, int buf_size, const char *str, char pad)
 {

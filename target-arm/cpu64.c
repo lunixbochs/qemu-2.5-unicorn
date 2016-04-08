@@ -20,12 +20,8 @@
 
 #include "cpu.h"
 #include "qemu-common.h"
-#if !defined(CONFIG_USER_ONLY)
-#include "hw/loader.h"
-#endif
 #include "hw/arm/arm.h"
 #include "sysemu/sysemu.h"
-#include "sysemu/kvm.h"
 
 static inline void set_feature(CPUARMState *env, int feature)
 {
@@ -92,9 +88,9 @@ static const ARMCPRegInfo cortex_a57_a53_cp_reginfo[] = {
     REGINFO_SENTINEL
 };
 
-static void aarch64_a57_initfn(Object *obj)
+static void aarch64_a57_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
 
     cpu->dtb_compatible = "arm,cortex-a57";
     set_feature(&cpu->env, ARM_FEATURE_V8);
@@ -197,9 +193,9 @@ static void aarch64_a53_initfn(Object *obj)
 }
 
 #ifdef CONFIG_USER_ONLY
-static void aarch64_any_initfn(Object *obj)
+static void aarch64_any_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
 
     set_feature(&cpu->env, ARM_FEATURE_V8);
     set_feature(&cpu->env, ARM_FEATURE_VFP4);
@@ -217,8 +213,8 @@ static void aarch64_any_initfn(Object *obj)
 
 typedef struct ARMCPUInfo {
     const char *name;
-    void (*initfn)(Object *obj);
-    void (*class_init)(ObjectClass *oc, void *data);
+    void (*initfn)(struct uc_struct *uc, Object *obj, void *opaque);
+    void (*class_init)(struct uc_struct *uc, ObjectClass *oc, void *data);
 } ARMCPUInfo;
 
 static const ARMCPUInfo aarch64_cpus[] = {
@@ -286,22 +282,18 @@ static void aarch64_cpu_set_pc(CPUState *cs, vaddr value)
     }
 }
 
-static void aarch64_cpu_class_init(ObjectClass *oc, void *data)
+static void aarch64_cpu_class_init(struct uc_struct *uc, ObjectClass *oc, void *data)
 {
-    CPUClass *cc = CPU_CLASS(oc);
+    CPUClass *cc = CPU_CLASS(uc, oc);
 
 #if !defined(CONFIG_USER_ONLY)
     cc->do_interrupt = aarch64_cpu_do_interrupt;
 #endif
     cc->cpu_exec_interrupt = arm_cpu_exec_interrupt;
     cc->set_pc = aarch64_cpu_set_pc;
-    cc->gdb_read_register = aarch64_cpu_gdb_read_register;
-    cc->gdb_write_register = aarch64_cpu_gdb_write_register;
-    cc->gdb_num_core_regs = 34;
-    cc->gdb_core_xml_file = "aarch64-core.xml";
 }
 
-static void aarch64_cpu_register(const ARMCPUInfo *info)
+static void aarch64_cpu_register(struct uc_struct *uc, const ARMCPUInfo *info)
 {
     TypeInfo type_info = {
         .parent = TYPE_AARCH64_CPU,
@@ -312,11 +304,13 @@ static void aarch64_cpu_register(const ARMCPUInfo *info)
     };
 
     type_info.name = g_strdup_printf("%s-" TYPE_ARM_CPU, info->name);
-    type_register(&type_info);
+    type_register(uc, &type_info);
     g_free((void *)type_info.name);
 }
 
-static const TypeInfo aarch64_cpu_type_info = {
+void aarch64_cpu_register_types(void *opaque)
+{
+    static const TypeInfo aarch64_cpu_type_info = {
     .name = TYPE_AARCH64_CPU,
     .parent = TYPE_ARM_CPU,
     .instance_size = sizeof(ARMCPU),
@@ -325,18 +319,14 @@ static const TypeInfo aarch64_cpu_type_info = {
     .abstract = true,
     .class_size = sizeof(AArch64CPUClass),
     .class_init = aarch64_cpu_class_init,
-};
+    };
 
-static void aarch64_cpu_register_types(void)
-{
     const ARMCPUInfo *info = aarch64_cpus;
 
-    type_register_static(&aarch64_cpu_type_info);
+    type_register_static(opaque, &aarch64_cpu_type_info);
 
     while (info->name) {
-        aarch64_cpu_register(info);
+        aarch64_cpu_register(opaque, info);
         info++;
     }
 }
-
-type_init(aarch64_cpu_register_types)

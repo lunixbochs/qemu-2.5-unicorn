@@ -139,7 +139,7 @@ void tlb_fill(CPUState *cs, target_ulong addr, int is_write, int mmu_idx,
 
     ret = x86_cpu_handle_mmu_fault(cs, addr, is_write, mmu_idx);
     if (ret) {
-        X86CPU *cpu = X86_CPU(cs);
+        X86CPU *cpu = X86_CPU(cs->uc, cs);
         CPUX86State *env = &cpu->env;
 
         raise_exception_err_ra(env, cs->exception_index, env->error_code, retaddr);

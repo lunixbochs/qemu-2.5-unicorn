@@ -18,7 +18,6 @@
  */
 
 #include "cpu.h"
-#include "trace.h"
 #include "exec/address-spaces.h"
 
 /* Sparc MMU emulation */
@@ -201,7 +200,7 @@ static int get_physical_address(CPUSPARCState *env, hwaddr *physical,
 int sparc_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
                                int mmu_idx)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
     CPUSPARCState *env = &cpu->env;
     hwaddr paddr;
     target_ulong vaddr;
@@ -359,7 +358,7 @@ void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUSPARCState *env)
 int sparc_cpu_memory_rw_debug(CPUState *cs, vaddr address,
                               uint8_t *buf, int len, bool is_write)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
     CPUSPARCState *env = &cpu->env;
     target_ulong addr = address;
     int i;
@@ -537,7 +536,7 @@ static int get_physical_address_data(CPUSPARCState *env,
             if (TTE_IS_PRIV(env->dtlb[i].tte) && is_user) {
                 do_fault = 1;
                 sfsr |= SFSR_FT_PRIV_BIT; /* privilege violation */
-                trace_mmu_helper_dfault(address, context, mmu_idx, env->tl);
+                //trace_mmu_helper_dfault(address, context, mmu_idx, env->tl);
             }
             if (rw == 4) {
                 if (TTE_IS_SIDEEFFECT(env->dtlb[i].tte)) {
@@ -558,7 +557,7 @@ static int get_physical_address_data(CPUSPARCState *env,
                 do_fault = 1;
                 cs->exception_index = TT_DPROT;
 
-                trace_mmu_helper_dprot(address, context, mmu_idx, env->tl);
+                //trace_mmu_helper_dprot(address, context, mmu_idx, env->tl);
             }
 
             if (!do_fault) {
@@ -592,7 +591,7 @@ static int get_physical_address_data(CPUSPARCState *env,
         }
     }
 
-    trace_mmu_helper_dmiss(address, context);
+    //trace_mmu_helper_dmiss(address, context);
 
     /*
      * On MMU misses:
@@ -656,7 +655,7 @@ static int get_physical_address_code(CPUSPARCState *env,
 
                 env->immu.tag_access = (address & ~0x1fffULL) | context;
 
-                trace_mmu_helper_tfault(address, context);
+                //trace_mmu_helper_tfault(address, context);
 
                 return 1;
             }
@@ -666,7 +665,7 @@ static int get_physical_address_code(CPUSPARCState *env,
         }
     }
 
-    trace_mmu_helper_tmiss(address, context);
+    //trace_mmu_helper_tmiss(address, context);
 
     /* Context is stored in DMMU (dmmuregs[1]) also for IMMU */
     env->immu.tag_access = (address & ~0x1fffULL) | context;
@@ -686,15 +685,15 @@ static int get_physical_address(CPUSPARCState *env, hwaddr *physical,
     /* safety net to catch wrong softmmu index use from dynamic code */
     if (env->tl > 0 && mmu_idx != MMU_NUCLEUS_IDX) {
         if (rw == 2) {
-            trace_mmu_helper_get_phys_addr_code(env->tl, mmu_idx,
-                                                env->dmmu.mmu_primary_context,
-                                                env->dmmu.mmu_secondary_context,
-                                                address);
+            //trace_mmu_helper_get_phys_addr_code(env->tl, mmu_idx,
+            //                                    env->dmmu.mmu_primary_context,
+            //                                    env->dmmu.mmu_secondary_context,
+            //                                    address);
         } else {
-            trace_mmu_helper_get_phys_addr_data(env->tl, mmu_idx,
-                                                env->dmmu.mmu_primary_context,
-                                                env->dmmu.mmu_secondary_context,
-                                                address);
+            //trace_mmu_helper_get_phys_addr_data(env->tl, mmu_idx,
+            //                                    env->dmmu.mmu_primary_context,
+            //                                    env->dmmu.mmu_secondary_context,
+            //                                    address);
         }
     }
 
@@ -711,7 +710,7 @@ static int get_physical_address(CPUSPARCState *env, hwaddr *physical,
 int sparc_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
                                int mmu_idx)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
     CPUSPARCState *env = &cpu->env;
     target_ulong vaddr;
     hwaddr paddr;
@@ -724,9 +723,9 @@ int sparc_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
     if (error_code == 0) {
         vaddr = address;
 
-        trace_mmu_helper_mmu_fault(address, paddr, mmu_idx, env->tl,
-                                   env->dmmu.mmu_primary_context,
-                                   env->dmmu.mmu_secondary_context);
+        //trace_mmu_helper_mmu_fault(address, paddr, mmu_idx, env->tl,
+        //                           env->dmmu.mmu_primary_context,
+        //                           env->dmmu.mmu_secondary_context);
 
         tlb_set_page(cs, vaddr, paddr, prot, mmu_idx, page_size);
         return 0;
@@ -846,7 +845,7 @@ hwaddr cpu_get_phys_page_nofault(CPUSPARCState *env, target_ulong addr,
 
 hwaddr sparc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
-    SPARCCPU *cpu = SPARC_CPU(cs);
+    SPARCCPU *cpu = SPARC_CPU(cs->uc, cs);
     CPUSPARCState *env = &cpu->env;
     hwaddr phys_addr;
     int mmu_idx = cpu_mmu_index(env, false);
@@ -857,7 +856,7 @@ hwaddr sparc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
             return -1;
         }
     }
-    section = memory_region_find(get_system_memory(), phys_addr, 1);
+    section = memory_region_find(get_system_memory(cs->uc), phys_addr, 1);
     memory_region_unref(section.mr);
     if (!int128_nz(section.size)) {
         return -1;

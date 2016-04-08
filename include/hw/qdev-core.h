@@ -2,22 +2,20 @@
 #define QDEV_CORE_H
 
 #include "qemu/queue.h"
-#include "qemu/option.h"
 #include "qemu/typedefs.h"
 #include "qemu/bitmap.h"
 #include "qom/object.h"
 #include "hw/irq.h"
 #include "qapi/error.h"
-#include "hw/hotplug.h"
 
 enum {
     DEV_NVECTORS_UNSPECIFIED = -1,
 };
 
 #define TYPE_DEVICE "device"
-#define DEVICE(obj) OBJECT_CHECK(DeviceState, (obj), TYPE_DEVICE)
-#define DEVICE_CLASS(klass) OBJECT_CLASS_CHECK(DeviceClass, (klass), TYPE_DEVICE)
-#define DEVICE_GET_CLASS(obj) OBJECT_GET_CLASS(DeviceClass, (obj), TYPE_DEVICE)
+#define DEVICE(uc, obj) OBJECT_CHECK(uc, DeviceState, (obj), TYPE_DEVICE)
+#define DEVICE_CLASS(uc, klass) OBJECT_CLASS_CHECK(uc, DeviceClass, (klass), TYPE_DEVICE)
+#define DEVICE_GET_CLASS(uc, obj) OBJECT_GET_CLASS(uc, DeviceClass, (obj), TYPE_DEVICE)
 
 typedef enum DeviceCategory {
     DEVICE_CATEGORY_BRIDGE,
@@ -34,7 +32,7 @@ typedef enum DeviceCategory {
 typedef int (*qdev_initfn)(DeviceState *dev);
 typedef int (*qdev_event)(DeviceState *dev);
 typedef void (*qdev_resetfn)(DeviceState *dev);
-typedef void (*DeviceRealize)(DeviceState *dev, Error **errp);
+typedef int (*DeviceRealize)(struct uc_struct *uc, DeviceState *dev, Error **errp);
 typedef void (*DeviceUnrealize)(DeviceState *dev, Error **errp);
 typedef void (*BusRealize)(BusState *bus, Error **errp);
 typedef void (*BusUnrealize)(BusState *bus, Error **errp);
@@ -130,7 +128,7 @@ typedef struct DeviceClass {
     bool hotpluggable;
 
     /* callbacks */
-    void (*reset)(DeviceState *dev);
+    void (*reset)(struct uc_struct *uc, DeviceState *dev);
     DeviceRealize realize;
     DeviceUnrealize unrealize;
 
@@ -168,7 +166,6 @@ struct DeviceState {
     const char *id;
     bool realized;
     bool pending_deleted_event;
-    QemuOpts *opts;
     int hotplugged;
     BusState *parent_bus;
     QLIST_HEAD(, NamedGPIOList) gpios;
@@ -185,7 +182,7 @@ struct DeviceListener {
 };
 
 #define TYPE_BUS "bus"
-#define BUS(obj) OBJECT_CHECK(BusState, (obj), TYPE_BUS)
+#define BUS(uc, obj) OBJECT_CHECK(uc, BusState, (obj), TYPE_BUS)
 #define BUS_CLASS(klass) OBJECT_CLASS_CHECK(BusClass, (klass), TYPE_BUS)
 #define BUS_GET_CLASS(obj) OBJECT_GET_CLASS(BusClass, (obj), TYPE_BUS)
 
@@ -227,7 +224,6 @@ struct BusState {
     Object obj;
     DeviceState *parent;
     const char *name;
-    HotplugHandler *hotplug_handler;
     int max_index;
     bool realized;
     QTAILQ_HEAD(ChildrenHead, BusChild) children;
@@ -280,8 +276,6 @@ void qdev_set_legacy_instance_id(DeviceState *dev, int alias_id,
                                  int required_for_version);
 HotplugHandler *qdev_get_hotplug_handler(DeviceState *dev);
 void qdev_unplug(DeviceState *dev, Error **errp);
-void qdev_simple_device_unplug_cb(HotplugHandler *hotplug_dev,
-                                  DeviceState *dev, Error **errp);
 void qdev_machine_creation_done(void);
 bool qdev_machine_modified(void);
 
@@ -377,7 +371,7 @@ const struct VMStateDescription *qdev_get_vmsd(DeviceState *dev);
 
 const char *qdev_fw_name(DeviceState *dev);
 
-Object *qdev_get_machine(void);
+Object *qdev_get_machine(struct uc_struct *);
 
 /* FIXME: make this a link<> */
 void qdev_set_parent_bus(DeviceState *dev, BusState *bus);

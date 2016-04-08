@@ -1,4 +1,7 @@
-DEF_HELPER_FLAGS_1(clz, TCG_CALL_NO_RWG_SE, i32, i32)
+DEF_HELPER_4(uc_tracecode, void, i32, i32, ptr, i64)
+
+DEF_HELPER_FLAGS_1(clz_arm, TCG_CALL_NO_RWG_SE, i32, i32)
+
 DEF_HELPER_FLAGS_1(sxtb16, TCG_CALL_NO_RWG_SE, i32, i32)
 DEF_HELPER_FLAGS_1(uxtb16, TCG_CALL_NO_RWG_SE, i32, i32)
 
@@ -525,12 +528,19 @@ DEF_HELPER_4(crypto_sha256h2, void, env, i32, i32, i32)
 DEF_HELPER_3(crypto_sha256su0, void, env, i32, i32)
 DEF_HELPER_4(crypto_sha256su1, void, env, i32, i32, i32)
 
-DEF_HELPER_FLAGS_3(crc32, TCG_CALL_NO_RWG_SE, i32, i32, i32, i32)
+DEF_HELPER_FLAGS_3(crc32_arm, TCG_CALL_NO_RWG_SE, i32, i32, i32, i32)
 DEF_HELPER_FLAGS_3(crc32c, TCG_CALL_NO_RWG_SE, i32, i32, i32, i32)
 DEF_HELPER_2(dc_zva, void, env, i64)
 
 DEF_HELPER_FLAGS_2(neon_pmull_64_lo, TCG_CALL_NO_RWG_SE, i64, i64, i64)
 DEF_HELPER_FLAGS_2(neon_pmull_64_hi, TCG_CALL_NO_RWG_SE, i64, i64, i64)
+
+#ifdef TARGET_ARM
+#define helper_clz helper_clz_arm
+#define gen_helper_clz gen_helper_clz_arm
+#define helper_crc32 helper_crc32_arm
+#define gen_helper_crc32 gen_helper_crc32_arm
+#endif
 
 #ifdef TARGET_AARCH64
 #include "helper-a64.h"

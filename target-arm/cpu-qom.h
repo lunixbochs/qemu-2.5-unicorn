@@ -24,12 +24,12 @@
 
 #define TYPE_ARM_CPU "arm-cpu"
 
-#define ARM_CPU_CLASS(klass) \
-    OBJECT_CLASS_CHECK(ARMCPUClass, (klass), TYPE_ARM_CPU)
-#define ARM_CPU(obj) \
-    OBJECT_CHECK(ARMCPU, (obj), TYPE_ARM_CPU)
-#define ARM_CPU_GET_CLASS(obj) \
-    OBJECT_GET_CLASS(ARMCPUClass, (obj), TYPE_ARM_CPU)
+#define ARM_CPU_CLASS(uc, klass) \
+    OBJECT_CLASS_CHECK(uc, ARMCPUClass, (klass), TYPE_ARM_CPU)
+#define ARM_CPU(uc, obj) \
+    OBJECT_CHECK(uc, ARMCPU, (obj), TYPE_ARM_CPU)
+#define ARM_CPU_GET_CLASS(uc, obj) \
+    OBJECT_GET_CLASS(uc, ARMCPUClass, (obj), TYPE_ARM_CPU)
 
 /**
  * ARMCPUClass:
@@ -83,9 +83,9 @@ typedef struct ARMCPU {
     int32_t cpreg_vmstate_array_len;
 
     /* Timers used by the generic (architected) timer */
-    QEMUTimer *gt_timer[NUM_GTIMERS];
+    //QEMUTimer *gt_timer[NUM_GTIMERS];
     /* GPIO outputs for generic timer */
-    qemu_irq gt_timer_outputs[NUM_GTIMERS];
+    //qemu_irq gt_timer_outputs[NUM_GTIMERS];
 
     /* 'compatible' string for this CPU for Linux device trees */
     const char *dtb_compatible;
@@ -213,9 +213,6 @@ void init_cpreg_list(ARMCPU *cpu);
 void arm_cpu_do_interrupt(CPUState *cpu);
 void arm_v7m_cpu_do_interrupt(CPUState *cpu);
 bool arm_cpu_exec_interrupt(CPUState *cpu, int int_req);
-
-void arm_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
-                        int flags);
 
 hwaddr arm_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
 

@@ -87,7 +87,7 @@ void tlb_fill(CPUState *cs, target_ulong addr, int is_write, int mmu_idx,
 
     ret = arm_tlb_fill(cs, addr, is_write, mmu_idx, &fsr, &fi);
     if (unlikely(ret)) {
-        ARMCPU *cpu = ARM_CPU(cs);
+        ARMCPU *cpu = ARM_CPU(cs->uc, cs);
         CPUARMState *env = &cpu->env;
         uint32_t syn, exc;
         unsigned int target_el;
@@ -889,7 +889,7 @@ void arm_debug_excp_handler(CPUState *cs)
     /* Called by core code when a watchpoint or breakpoint fires;
      * need to check which one and raise the appropriate exception.
      */
-    ARMCPU *cpu = ARM_CPU(cs);
+    ARMCPU *cpu = ARM_CPU(cs->uc, cs);
     CPUARMState *env = &cpu->env;
     CPUWatchpoint *wp_hit = cs->watchpoint_hit;
 

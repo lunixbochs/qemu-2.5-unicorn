@@ -1,9 +1,7 @@
 #include "cpu.h"
 #include "internals.h"
-#include "exec/gdbstub.h"
 #include "exec/helper-proto.h"
 #include "qemu/host-utils.h"
-#include "sysemu/arch_init.h"
 #include "sysemu/sysemu.h"
 #include "qemu/bitops.h"
 #include "qemu/crc32c.h"
@@ -32,100 +30,6 @@ static bool get_phys_addr_lpae(CPUARMState *env, target_ulong address,
 #define PMCRC   0x4
 #define PMCRE   0x1
 #endif
-
-static int vfp_gdb_get_reg(CPUARMState *env, uint8_t *buf, int reg)
-{
-    int nregs;
-
-    /* VFP data registers are always little-endian.  */
-    nregs = arm_feature(env, ARM_FEATURE_VFP3) ? 32 : 16;
-    if (reg < nregs) {
-        stfq_le_p(buf, env->vfp.regs[reg]);
-        return 8;
-    }
-    if (arm_feature(env, ARM_FEATURE_NEON)) {
-        /* Aliases for Q regs.  */
-        nregs += 16;
-        if (reg < nregs) {
-            stfq_le_p(buf, env->vfp.regs[(reg - 32) * 2]);
-            stfq_le_p(buf + 8, env->vfp.regs[(reg - 32) * 2 + 1]);
-            return 16;
-        }
-    }
-    switch (reg - nregs) {
-    case 0: stl_p(buf, env->vfp.xregs[ARM_VFP_FPSID]); return 4;
-    case 1: stl_p(buf, env->vfp.xregs[ARM_VFP_FPSCR]); return 4;
-    case 2: stl_p(buf, env->vfp.xregs[ARM_VFP_FPEXC]); return 4;
-    }
-    return 0;
-}
-
-static int vfp_gdb_set_reg(CPUARMState *env, uint8_t *buf, int reg)
-{
-    int nregs;
-
-    nregs = arm_feature(env, ARM_FEATURE_VFP3) ? 32 : 16;
-    if (reg < nregs) {
-        env->vfp.regs[reg] = ldfq_le_p(buf);
-        return 8;
-    }
-    if (arm_feature(env, ARM_FEATURE_NEON)) {
-        nregs += 16;
-        if (reg < nregs) {
-            env->vfp.regs[(reg - 32) * 2] = ldfq_le_p(buf);
-            env->vfp.regs[(reg - 32) * 2 + 1] = ldfq_le_p(buf + 8);
-            return 16;
-        }
-    }
-    switch (reg - nregs) {
-    case 0: env->vfp.xregs[ARM_VFP_FPSID] = ldl_p(buf); return 4;
-    case 1: env->vfp.xregs[ARM_VFP_FPSCR] = ldl_p(buf); return 4;
-    case 2: env->vfp.xregs[ARM_VFP_FPEXC] = ldl_p(buf) & (1 << 30); return 4;
-    }
-    return 0;
-}
-
-static int aarch64_fpu_gdb_get_reg(CPUARMState *env, uint8_t *buf, int reg)
-{
-    switch (reg) {
-    case 0 ... 31:
-        /* 128 bit FP register */
-        stfq_le_p(buf, env->vfp.regs[reg * 2]);
-        stfq_le_p(buf + 8, env->vfp.regs[reg * 2 + 1]);
-        return 16;
-    case 32:
-        /* FPSR */
-        stl_p(buf, vfp_get_fpsr(env));
-        return 4;
-    case 33:
-        /* FPCR */
-        stl_p(buf, vfp_get_fpcr(env));
-        return 4;
-    default:
-        return 0;
-    }
-}
-
-static int aarch64_fpu_gdb_set_reg(CPUARMState *env, uint8_t *buf, int reg)
-{
-    switch (reg) {
-    case 0 ... 31:
-        /* 128 bit FP register */
-        env->vfp.regs[reg * 2] = ldfq_le_p(buf);
-        env->vfp.regs[reg * 2 + 1] = ldfq_le_p(buf + 8);
-        return 16;
-    case 32:
-        /* FPSR */
-        vfp_set_fpsr(env, ldl_p(buf));
-        return 4;
-    case 33:
-        /* FPCR */
-        vfp_set_fpcr(env, ldl_p(buf));
-        return 4;
-    default:
-        return 0;
-    }
-}
 
 static uint64_t raw_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
@@ -440,6 +344,7 @@ static void tlbiall_is_write(CPUARMState *env, const ARMCPRegInfo *ri,
                              uint64_t value)
 {
     CPUState *other_cs;
+    struct uc_struct *uc = env->uc;
 
     CPU_FOREACH(other_cs) {
         tlb_flush(other_cs, 1);
@@ -450,6 +355,7 @@ static void tlbiasid_is_write(CPUARMState *env, const ARMCPRegInfo *ri,
                              uint64_t value)
 {
     CPUState *other_cs;
+    struct uc_struct *uc = env->uc;
 
     CPU_FOREACH(other_cs) {
         tlb_flush(other_cs, value == 0);
@@ -460,6 +366,7 @@ static void tlbimva_is_write(CPUARMState *env, const ARMCPRegInfo *ri,
                              uint64_t value)
 {
     CPUState *other_cs;
+    struct uc_struct *uc = env->uc;
 
     CPU_FOREACH(other_cs) {
         tlb_flush_page(other_cs, value & TARGET_PAGE_MASK);
@@ -470,6 +377,7 @@ static void tlbimvaa_is_write(CPUARMState *env, const ARMCPRegInfo *ri,
                              uint64_t value)
 {
     CPUState *other_cs;
+    struct uc_struct *uc = env->uc;
 
     CPU_FOREACH(other_cs) {
         tlb_flush_page(other_cs, value & TARGET_PAGE_MASK);
@@ -1306,8 +1214,8 @@ static void gt_recalc_timer(ARMCPU *cpu, int timeridx)
         uint64_t nexttick;
 
         gt->ctl = deposit32(gt->ctl, 2, 1, istatus);
-        qemu_set_irq(cpu->gt_timer_outputs[timeridx],
-                     (istatus && !(gt->ctl & 2)));
+        //qemu_set_irq(cpu->gt_timer_outputs[timeridx],
+        //             (istatus && !(gt->ctl & 2)));
         if (istatus) {
             /* Next transition is when count rolls back over to zero */
             nexttick = UINT64_MAX;
@@ -1355,7 +1263,7 @@ static void gt_cval_write(CPUARMState *env, const ARMCPRegInfo *ri,
                           uint64_t value)
 {
     env->cp15.c14_timer[timeridx].cval = value;
-    gt_recalc_timer(arm_env_get_cpu(env), timeridx);
+    //gt_recalc_timer(arm_env_get_cpu(env), timeridx);
 }
 
 static uint64_t gt_tval_read(CPUARMState *env, const ARMCPRegInfo *ri,
@@ -1393,8 +1301,8 @@ static void gt_ctl_write(CPUARMState *env, const ARMCPRegInfo *ri,
         /* IMASK toggled: don't need to recalculate,
          * just set the interrupt line based on ISTATUS
          */
-        qemu_set_irq(cpu->gt_timer_outputs[timeridx],
-                     (oldval & 4) && !(value & 2));
+        //qemu_set_irq(cpu->gt_timer_outputs[timeridx],
+        //             (oldval & 4) && !(value & 2));
     }
 }
 
@@ -2754,6 +2662,7 @@ static void tlbi_aa64_vae1is_write(CPUARMState *env, const ARMCPRegInfo *ri,
     bool sec = arm_is_secure_below_el3(env);
     CPUState *other_cs;
     uint64_t pageaddr = sextract64(value << 12, 0, 56);
+    struct uc_struct *uc = env->uc;
 
     CPU_FOREACH(other_cs) {
         if (sec) {
@@ -2771,6 +2680,7 @@ static void tlbi_aa64_vae2is_write(CPUARMState *env, const ARMCPRegInfo *ri,
 {
     CPUState *other_cs;
     uint64_t pageaddr = sextract64(value << 12, 0, 56);
+    struct uc_struct *uc = env->uc;
 
     CPU_FOREACH(other_cs) {
         tlb_flush_page_by_mmuidx(other_cs, pageaddr, ARMMMUIdx_S1E2, -1);
@@ -4658,13 +4568,14 @@ void register_cp_regs_for_features(ARMCPU *cpu)
     }
 }
 
-ARMCPU *cpu_arm_init(const char *cpu_model)
+ARMCPU *cpu_arm_init(struct uc_struct *uc, const char *cpu_model)
 {
-    return ARM_CPU(cpu_generic_init(TYPE_ARM_CPU, cpu_model));
+    return ARM_CPU(uc, cpu_generic_init(uc, TYPE_ARM_CPU, cpu_model));
 }
 
 void arm_cpu_register_gdb_regs_for_features(ARMCPU *cpu)
 {
+#if 0
     CPUState *cs = CPU(cpu);
     CPUARMState *env = &cpu->env;
 
@@ -4682,26 +4593,11 @@ void arm_cpu_register_gdb_regs_for_features(ARMCPU *cpu)
         gdb_register_coprocessor(cs, vfp_gdb_get_reg, vfp_gdb_set_reg,
                                  19, "arm-vfp.xml", 0);
     }
+#endif
 }
 
 /* Sort alphabetically by type name, except for "any". */
-static gint arm_cpu_list_compare(gconstpointer a, gconstpointer b)
-{
-    ObjectClass *class_a = (ObjectClass *)a;
-    ObjectClass *class_b = (ObjectClass *)b;
-    const char *name_a, *name_b;
-
-    name_a = object_class_get_name(class_a);
-    name_b = object_class_get_name(class_b);
-    if (strcmp(name_a, "any-" TYPE_ARM_CPU) == 0) {
-        return 1;
-    } else if (strcmp(name_b, "any-" TYPE_ARM_CPU) == 0) {
-        return -1;
-    } else {
-        return strcmp(name_a, name_b);
-    }
-}
-
+#if 0
 static void arm_cpu_list_entry(gpointer data, gpointer user_data)
 {
     ObjectClass *oc = data;
@@ -4715,9 +4611,11 @@ static void arm_cpu_list_entry(gpointer data, gpointer user_data)
                       name);
     g_free(name);
 }
+#endif
 
 void arm_cpu_list(FILE *f, fprintf_function cpu_fprintf)
 {
+#if 0
     CPUListState s = {
         .file = f,
         .cpu_fprintf = cpu_fprintf,
@@ -4735,37 +4633,7 @@ void arm_cpu_list(FILE *f, fprintf_function cpu_fprintf)
      */
     (*cpu_fprintf)(f, "  host (only available in KVM mode)\n");
 #endif
-}
-
-static void arm_cpu_add_definition(gpointer data, gpointer user_data)
-{
-    ObjectClass *oc = data;
-    CpuDefinitionInfoList **cpu_list = user_data;
-    CpuDefinitionInfoList *entry;
-    CpuDefinitionInfo *info;
-    const char *typename;
-
-    typename = object_class_get_name(oc);
-    info = g_malloc0(sizeof(*info));
-    info->name = g_strndup(typename,
-                           strlen(typename) - strlen("-" TYPE_ARM_CPU));
-
-    entry = g_malloc0(sizeof(*entry));
-    entry->value = info;
-    entry->next = *cpu_list;
-    *cpu_list = entry;
-}
-
-CpuDefinitionInfoList *arch_query_cpu_definitions(Error **errp)
-{
-    CpuDefinitionInfoList *cpu_list = NULL;
-    GSList *list;
-
-    list = object_class_get_list(TYPE_ARM_CPU, false);
-    g_slist_foreach(list, arm_cpu_add_definition, &cpu_list);
-    g_slist_free(list);
-
-    return cpu_list;
+#endif
 }
 
 static void add_cpreg_to_hashtable(ARMCPU *cpu, const ARMCPRegInfo *r,
@@ -5217,7 +5085,7 @@ uint32_t HELPER(uxtb16)(uint32_t x)
     return res;
 }
 
-uint32_t HELPER(clz)(uint32_t x)
+uint32_t HELPER(clz_arm)(uint32_t x)
 {
     return clz32(x);
 }
@@ -5302,6 +5170,7 @@ void aarch64_sync_64_to_32(CPUARMState *env)
 int bank_number(int mode)
 {
     switch (mode) {
+    default:
     case ARM_CPU_MODE_USR:
     case ARM_CPU_MODE_SYS:
         return BANK_USRSYS;
@@ -5493,8 +5362,8 @@ static void do_v7m_exception_exit(CPUARMState *env)
     uint32_t xpsr;
 
     type = env->regs[15];
-    if (env->v7m.exception != 0)
-        armv7m_nvic_complete_irq(env->nvic, env->v7m.exception);
+    //if (env->v7m.exception != 0)
+    //    armv7m_nvic_complete_irq(env->nvic, env->v7m.exception);
 
     /* Switch to the target stack.  */
     switch_v7m_sp(env, (type & 4) != 0);
@@ -5530,8 +5399,7 @@ static void do_v7m_exception_exit(CPUARMState *env)
 
 void arm_v7m_cpu_do_interrupt(CPUState *cs)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
+    CPUARMState *env = cs->env_ptr;
     uint32_t xpsr = xpsr_read(env);
     uint32_t lr;
     uint32_t addr;
@@ -5576,10 +5444,11 @@ void arm_v7m_cpu_do_interrupt(CPUState *cs)
                 return;
             }
         }
-        armv7m_nvic_set_pending(env->nvic, ARMV7M_EXCP_DEBUG);
+#endif
+        //armv7m_nvic_set_pending(env->nvic, ARMV7M_EXCP_DEBUG);
         return;
     case EXCP_IRQ:
-        env->v7m.exception = armv7m_nvic_acknowledge_irq(env->nvic);
+        //env->v7m.exception = armv7m_nvic_acknowledge_irq(env->nvic);
         break;
     case EXCP_EXCEPTION_EXIT:
         do_v7m_exception_exit(env);
@@ -5823,8 +5692,8 @@ void aarch64_sync_64_to_32(CPUARMState *env)
 /* Handle a CPU exception.  */
 void arm_cpu_do_interrupt(CPUState *cs)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
+    CPUARMState *env = cs->env_ptr;
+    ARMCPU *cpu = ARM_CPU(env->uc, cs);
     uint32_t addr;
     uint32_t mask;
     int new_mode;
@@ -5899,6 +5768,7 @@ void arm_cpu_do_interrupt(CPUState *cs)
                 return;
             }
         }
+#endif
         new_mode = ARM_CPU_MODE_SVC;
         addr = 0x08;
         mask = CPSR_I;
@@ -5906,6 +5776,7 @@ void arm_cpu_do_interrupt(CPUState *cs)
         offset = 0;
         break;
     case EXCP_BKPT:
+#if 0
         /* See if this is a semihosting syscall.  */
         if (env->thumb && semihosting_enabled()) {
             mask = arm_lduw_code(env, env->regs[15], env->bswap_code) & 0xff;
@@ -5919,6 +5790,7 @@ void arm_cpu_do_interrupt(CPUState *cs)
                 return;
             }
         }
+#endif
         env->exception.fsr = 2;
         /* Fall through to prefetch abort.  */
     case EXCP_PREFETCH_ABORT:
@@ -7425,8 +7297,7 @@ bool arm_tlb_fill(CPUState *cs, vaddr address,
                   int access_type, int mmu_idx, uint32_t *fsr,
                   ARMMMUFaultInfo *fi)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
+    CPUARMState *env = cs->env_ptr;
     hwaddr phys_addr;
     target_ulong page_size;
     int prot;
@@ -8872,14 +8743,17 @@ int arm_rmode_to_sf(int rmode)
  * The upper bytes of val (above the number specified by 'bytes') must have
  * been zeroed out by the caller.
  */
-uint32_t HELPER(crc32)(uint32_t acc, uint32_t val, uint32_t bytes)
+uint32_t HELPER(crc32_arm)(uint32_t acc, uint32_t val, uint32_t bytes)
 {
+#if 0   // FIXME
     uint8_t buf[4];
 
     stl_le_p(buf, val);
 
     /* zlib crc32 converts the accumulator and output to one's complement.  */
     return crc32(acc ^ 0xffffffff, buf, bytes) ^ 0xffffffff;
+#endif
+    return 0;
 }
 
 uint32_t HELPER(crc32c)(uint32_t acc, uint32_t val, uint32_t bytes)

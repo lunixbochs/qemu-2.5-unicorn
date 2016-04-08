@@ -60,8 +60,8 @@ typedef uint64_t vaddr;
  */
 #define CPU(obj) ((CPUState *)(obj))
 
-#define CPU_CLASS(class) OBJECT_CLASS_CHECK(CPUClass, (class), TYPE_CPU)
-#define CPU_GET_CLASS(obj) OBJECT_GET_CLASS(CPUClass, (obj), TYPE_CPU)
+#define CPU_CLASS(uc, class) OBJECT_CLASS_CHECK(uc, CPUClass, (class), TYPE_CPU)
+#define CPU_GET_CLASS(uc, obj) OBJECT_GET_CLASS(uc, CPUClass, (obj), TYPE_CPU)
 
 typedef struct CPUState CPUState;
 
@@ -70,6 +70,9 @@ typedef void (*CPUUnassignedAccess)(CPUState *cpu, hwaddr addr,
                                     unsigned size);
 
 struct TranslationBlock;
+
+//DECLARE_TLS(CPUState *, current_cpu);
+//#define current_cpu tls_var(current_cpu)
 
 /**
  * CPUClass:
@@ -126,7 +129,7 @@ typedef struct CPUClass {
     DeviceClass parent_class;
     /*< public >*/
 
-    ObjectClass *(*class_by_name)(const char *cpu_model);
+    ObjectClass *(*class_by_name)(struct uc_struct *uc, const char *cpu_model);
     void (*parse_features)(CPUState *cpu, char *str, Error **errp);
 
     void (*reset)(CPUState *cpu);
@@ -136,7 +139,6 @@ typedef struct CPUClass {
     CPUUnassignedAccess do_unassigned_access;
     void (*do_unaligned_access)(CPUState *cpu, vaddr addr,
                                 int is_write, int is_user, uintptr_t retaddr);
-    bool (*virtio_is_big_endian)(CPUState *cpu);
     int (*memory_rw_debug)(CPUState *cpu, vaddr addr,
                            uint8_t *buf, int len, bool is_write);
     void (*dump_state)(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
@@ -152,23 +154,9 @@ typedef struct CPUClass {
     int (*handle_mmu_fault)(CPUState *cpu, vaddr address, int rw,
                             int mmu_index);
     hwaddr (*get_phys_page_debug)(CPUState *cpu, vaddr addr);
-    int (*gdb_read_register)(CPUState *cpu, uint8_t *buf, int reg);
-    int (*gdb_write_register)(CPUState *cpu, uint8_t *buf, int reg);
     void (*debug_excp_handler)(CPUState *cpu);
 
-    int (*write_elf64_note)(WriteCoreDumpFunction f, CPUState *cpu,
-                            int cpuid, void *opaque);
-    int (*write_elf64_qemunote)(WriteCoreDumpFunction f, CPUState *cpu,
-                                void *opaque);
-    int (*write_elf32_note)(WriteCoreDumpFunction f, CPUState *cpu,
-                            int cpuid, void *opaque);
-    int (*write_elf32_qemunote)(WriteCoreDumpFunction f, CPUState *cpu,
-                                void *opaque);
-
     const struct VMStateDescription *vmsd;
-    int gdb_num_core_regs;
-    const char *gdb_core_xml_file;
-    bool gdb_stop_before_watchpoint;
 
     void (*cpu_exec_enter)(CPUState *cpu);
     void (*cpu_exec_exit)(CPUState *cpu);
@@ -240,9 +228,6 @@ struct kvm_run;
  *      only have a single AddressSpace
  * @env_ptr: Pointer to subclass-specific CPUArchState field.
  * @current_tb: Currently executing TB.
- * @gdb_regs: Additional GDB registers.
- * @gdb_num_regs: Number of total registers accessible to GDB.
- * @gdb_num_g_regs: Number of registers in GDB 'g' packets.
  * @next_cpu: Next CPU sharing TB cache.
  * @opaque: User data.
  * @mem_io_pc: Host Program Counter at which the memory was accessed.
@@ -290,9 +275,6 @@ struct CPUState {
     void *env_ptr; /* CPUArchState */
     struct TranslationBlock *current_tb;
     struct TranslationBlock *tb_jmp_cache[TB_JMP_CACHE_SIZE];
-    struct GDBRegisterState *gdb_regs;
-    int gdb_num_regs;
-    int gdb_num_g_regs;
     QTAILQ_ENTRY(CPUState) node;
 
     /* ice debug support */
@@ -454,7 +436,7 @@ void cpu_dump_statistics(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
  */
 static inline hwaddr cpu_get_phys_page_debug(CPUState *cpu, vaddr addr)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     return cc->get_phys_page_debug(cpu, addr);
 }
@@ -475,7 +457,7 @@ void cpu_reset(CPUState *cpu);
  *
  * Returns: A #CPUClass or %NULL if not matching class is found.
  */
-ObjectClass *cpu_class_by_name(const char *typename, const char *cpu_model);
+ObjectClass *cpu_class_by_name(struct uc_struct *uc, const char *typename, const char *cpu_model);
 
 /**
  * cpu_generic_init:
@@ -486,7 +468,7 @@ ObjectClass *cpu_class_by_name(const char *typename, const char *cpu_model);
  *
  * Returns: A #CPUState or %NULL if an error occurred.
  */
-CPUState *cpu_generic_init(const char *typename, const char *cpu_model);
+CPUState *cpu_generic_init(struct uc_struct *uc, const char *typename, const char *cpu_model);
 
 /**
  * cpu_has_work:
@@ -498,7 +480,7 @@ CPUState *cpu_generic_init(const char *typename, const char *cpu_model);
  */
 static inline bool cpu_has_work(CPUState *cpu)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     g_assert(cc->has_work);
     return cc->has_work(cpu);
@@ -561,7 +543,7 @@ void async_run_on_cpu(CPUState *cpu, void (*func)(void *data), void *data);
  *
  * Returns: The CPU or %NULL if there is no matching CPU.
  */
-CPUState *qemu_get_cpu(int index);
+CPUState *qemu_get_cpu(struct uc_struct *uc, int index);
 
 /**
  * cpu_exists:
@@ -571,7 +553,7 @@ CPUState *qemu_get_cpu(int index);
  *
  * Returns: %true - CPU is found, %false - CPU isn't found.
  */
-bool cpu_exists(int64_t id);
+bool cpu_exists(struct uc_struct* uc, int64_t id);
 
 /**
  * cpu_throttle_set:
@@ -639,7 +621,7 @@ static inline void cpu_unassigned_access(CPUState *cpu, hwaddr addr,
                                          bool is_write, bool is_exec,
                                          int opaque, unsigned size)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     if (cc->do_unassigned_access) {
         cc->do_unassigned_access(cpu, addr, is_write, is_exec, opaque, size);
@@ -650,7 +632,7 @@ static inline void cpu_unaligned_access(CPUState *cpu, vaddr addr,
                                         int is_write, int is_user,
                                         uintptr_t retaddr)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     cc->do_unaligned_access(cpu, addr, is_write, is_user, retaddr);
 }
@@ -701,7 +683,7 @@ void cpu_resume(CPUState *cpu);
  *
  * Initializes a vCPU.
  */
-void qemu_init_vcpu(CPUState *cpu);
+int qemu_init_vcpu(CPUState *cpu);
 
 #define SSTEP_ENABLE  0x1  /* Enable simulated HW single stepping */
 #define SSTEP_NOIRQ   0x2  /* Do not use IRQ while single stepping */
@@ -760,6 +742,8 @@ void cpu_watchpoint_remove_all(CPUState *cpu, int mask);
 void QEMU_NORETURN cpu_abort(CPUState *cpu, const char *fmt, ...)
     GCC_FMT_ATTR(2, 3);
 void cpu_exec_exit(CPUState *cpu);
+
+void cpu_register_types(struct uc_struct *uc);
 
 #ifdef CONFIG_SOFTMMU
 extern const struct VMStateDescription vmstate_cpu_common;

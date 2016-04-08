@@ -34,7 +34,6 @@
 #define ARM_ANGEL_HEAP_SIZE (128 * 1024 * 1024)
 #else
 #include "qemu-common.h"
-#include "exec/gdbstub.h"
 #include "hw/arm/arm.h"
 #endif
 
@@ -75,21 +74,6 @@
 #define GDB_O_CREAT   0x200
 #define GDB_O_TRUNC   0x400
 #define GDB_O_BINARY  0
-
-static int gdb_open_modeflags[12] = {
-    GDB_O_RDONLY,
-    GDB_O_RDONLY | GDB_O_BINARY,
-    GDB_O_RDWR,
-    GDB_O_RDWR | GDB_O_BINARY,
-    GDB_O_WRONLY | GDB_O_CREAT | GDB_O_TRUNC,
-    GDB_O_WRONLY | GDB_O_CREAT | GDB_O_TRUNC | GDB_O_BINARY,
-    GDB_O_RDWR | GDB_O_CREAT | GDB_O_TRUNC,
-    GDB_O_RDWR | GDB_O_CREAT | GDB_O_TRUNC | GDB_O_BINARY,
-    GDB_O_WRONLY | GDB_O_CREAT | GDB_O_APPEND,
-    GDB_O_WRONLY | GDB_O_CREAT | GDB_O_APPEND | GDB_O_BINARY,
-    GDB_O_RDWR | GDB_O_CREAT | GDB_O_APPEND,
-    GDB_O_RDWR | GDB_O_CREAT | GDB_O_APPEND | GDB_O_BINARY
-};
 
 static int open_modeflags[12] = {
     O_RDONLY,
@@ -450,7 +434,6 @@ target_ulong do_arm_semihosting(CPUARMState *env)
             if (s)
                 unlock_user(s, arg0, 0);
             return ret;
-        }
     case TARGET_SYS_CLOCK:
         return clock() / (CLOCKS_PER_SEC / 100);
     case TARGET_SYS_TIME:
@@ -470,7 +453,6 @@ target_ulong do_arm_semihosting(CPUARMState *env)
             ret = set_swi_errno(ts, system(s));
             unlock_user(s, arg0, 0);
             return ret;
-        }
     case TARGET_SYS_ERRNO:
 #ifdef CONFIG_USER_ONLY
         return ts->swi_errno;

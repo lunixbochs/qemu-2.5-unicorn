@@ -30,13 +30,16 @@
  * see the license comment there.
  */
 #include <windows.h>
+
+#define G_OS_WIN32
+
 #include <glib.h>
 #include <stdlib.h>
 #include "config-host.h"
 #include "sysemu/sysemu.h"
 #include "qemu/main-loop.h"
-#include "trace.h"
-#include "qemu/sockets.h"
+// #include "trace.h"
+//#include "qemu/sockets.h"
 
 /* this must come after including "trace.h" */
 #include <shlobj.h>
@@ -58,7 +61,7 @@ void *qemu_try_memalign(size_t alignment, size_t size)
         abort();
     }
     ptr = VirtualAlloc(NULL, size, MEM_COMMIT, PAGE_READWRITE);
-    trace_qemu_memalign(alignment, size, ptr);
+    // trace_qemu_memalign(alignment, size, ptr);
     return ptr;
 }
 
@@ -75,13 +78,13 @@ void *qemu_anon_ram_alloc(size_t size, uint64_t *align)
        has 64Kb granularity, but at least it guarantees us that the
        memory is page aligned. */
     ptr = VirtualAlloc(NULL, size, MEM_COMMIT, PAGE_READWRITE);
-    trace_qemu_anon_ram_alloc(size, ptr);
+    // trace_qemu_anon_ram_alloc(size, ptr);
     return ptr;
 }
 
 void qemu_vfree(void *ptr)
 {
-    trace_qemu_vfree(ptr);
+    // trace_qemu_vfree(ptr);
     if (ptr) {
         VirtualFree(ptr, 0, MEM_RELEASE);
     }
@@ -89,7 +92,7 @@ void qemu_vfree(void *ptr)
 
 void qemu_anon_ram_free(void *ptr, size_t size)
 {
-    trace_qemu_anon_ram_free(ptr, size);
+    // trace_qemu_anon_ram_free(ptr, size);
     if (ptr) {
         VirtualFree(ptr, 0, MEM_RELEASE);
     }
@@ -121,20 +124,6 @@ struct tm *localtime_r(const time_t *timep, struct tm *result)
 }
 #endif /* CONFIG_LOCALTIME_R */
 
-void qemu_set_block(int fd)
-{
-    unsigned long opt = 0;
-    WSAEventSelect(fd, NULL, 0);
-    ioctlsocket(fd, FIONBIO, &opt);
-}
-
-void qemu_set_nonblock(int fd)
-{
-    unsigned long opt = 1;
-    ioctlsocket(fd, FIONBIO, &opt);
-    qemu_fd_register(fd);
-}
-
 int socket_set_fast_reuse(int fd)
 {
     /* Enabling the reuse of an endpoint that was used by a socket still in
@@ -145,6 +134,7 @@ int socket_set_fast_reuse(int fd)
     return 0;
 }
 
+/*
 int inet_aton(const char *cp, struct in_addr *ia)
 {
     uint32_t addr = inet_addr(cp);
@@ -153,7 +143,7 @@ int inet_aton(const char *cp, struct in_addr *ia)
     }
     ia->s_addr = addr;
     return 1;
-}
+}*/
 
 void qemu_set_cloexec(int fd)
 {
@@ -218,36 +208,6 @@ void qemu_set_tty_echo(int fd, bool echo)
         SetConsoleMode(handle,
                        dwMode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
     }
-}
-
-static char exec_dir[PATH_MAX];
-
-void qemu_init_exec_dir(const char *argv0)
-{
-
-    char *p;
-    char buf[MAX_PATH];
-    DWORD len;
-
-    len = GetModuleFileName(NULL, buf, sizeof(buf) - 1);
-    if (len == 0) {
-        return;
-    }
-
-    buf[len] = 0;
-    p = buf + len - 1;
-    while (p != buf && *p != '\\') {
-        p--;
-    }
-    *p = 0;
-    if (access(buf, R_OK) == 0) {
-        pstrcpy(exec_dir, sizeof(exec_dir), buf);
-    }
-}
-
-char *qemu_get_exec_dir(void)
-{
-    return g_strdup(exec_dir);
 }
 
 /*

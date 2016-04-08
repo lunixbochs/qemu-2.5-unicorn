@@ -28,20 +28,6 @@
 #include "qemu/atomic.h"
 #include "qemu/notify.h"
 
-static bool name_threads;
-
-void qemu_thread_naming(bool enable)
-{
-    name_threads = enable;
-
-#ifndef CONFIG_THREAD_SETNAME_BYTHREAD
-    /* This is a debugging option, not fatal */
-    if (enable) {
-        fprintf(stderr, "qemu: thread naming not supported on this host\n");
-    }
-#endif
-}
-
 static void error_exit(int err, const char *msg)
 {
     fprintf(stderr, "qemu: %s: %s\n", msg, strerror(err));
@@ -445,17 +431,7 @@ static void __attribute__((constructor)) qemu_thread_atexit_init(void)
 }
 
 
-/* Attempt to set the threads name; note that this is for debug, so
- * we're not going to fail if we can't set it.
- */
-static void qemu_thread_set_name(QemuThread *thread, const char *name)
-{
-#ifdef CONFIG_PTHREAD_SETNAME_NP
-    pthread_setname_np(thread->thread, name);
-#endif
-}
-
-void qemu_thread_create(QemuThread *thread, const char *name,
+int qemu_thread_create(struct uc_struct *uc, QemuThread *thread, const char *name,
                        void *(*start_routine)(void*),
                        void *arg, int mode)
 {
@@ -466,11 +442,13 @@ void qemu_thread_create(QemuThread *thread, const char *name,
     err = pthread_attr_init(&attr);
     if (err) {
         error_exit(err, __func__);
+        return -1;
     }
     if (mode == QEMU_THREAD_DETACHED) {
         err = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         if (err) {
             error_exit(err, __func__);
+            return -1;
         }
     }
 
@@ -478,19 +456,19 @@ void qemu_thread_create(QemuThread *thread, const char *name,
     sigfillset(&set);
     pthread_sigmask(SIG_SETMASK, &set, &oldset);
     err = pthread_create(&thread->thread, &attr, start_routine, arg);
-    if (err)
+    if (err) {
         error_exit(err, __func__);
-
-    if (name_threads) {
-        qemu_thread_set_name(thread, name);
+        return -1;
     }
 
     pthread_sigmask(SIG_SETMASK, &oldset, NULL);
 
     pthread_attr_destroy(&attr);
+
+    return 0;
 }
 
-void qemu_thread_get_self(QemuThread *thread)
+void qemu_thread_get_self(struct uc_struct *uc, QemuThread *thread)
 {
     thread->thread = pthread_self();
 }
@@ -500,7 +478,7 @@ bool qemu_thread_is_self(QemuThread *thread)
    return pthread_equal(pthread_self(), thread->thread);
 }
 
-void qemu_thread_exit(void *retval)
+void qemu_thread_exit(struct uc_struct *uc, void *retval)
 {
     pthread_exit(retval);
 }

@@ -374,7 +374,7 @@ void x86_cpu_dump_local_apic_state(CPUState *cs, FILE *f,
 void x86_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
                         int flags)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
     int eflags, i, nb;
     char cc_op_name[32];
@@ -702,7 +702,7 @@ int x86_cpu_handle_mmu_fault(CPUState *cs, vaddr addr,
 int x86_cpu_handle_mmu_fault(CPUState *cs, vaddr addr,
                              int is_write1, int mmu_idx)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
     uint64_t ptep, pte;
     target_ulong pde_addr, pte_addr;
@@ -710,7 +710,7 @@ int x86_cpu_handle_mmu_fault(CPUState *cs, vaddr addr,
     int is_dirty, prot, page_size, is_write, is_user;
     hwaddr paddr;
     uint64_t rsvd_mask = PG_HI_RSVD_MASK;
-    uint32_t page_offset;
+    //uint32_t page_offset;
     target_ulong vaddr;
 
     is_user = mmu_idx == MMU_USER_IDX;
@@ -951,6 +951,8 @@ do_check_protect_pse36:
         }
     }
  do_mapping:
+
+#if 0
     pte = pte & env->a20_mask;
 
     /* align to page_size */
@@ -961,6 +963,12 @@ do_check_protect_pse36:
     vaddr = addr & TARGET_PAGE_MASK;
     page_offset = vaddr & (page_size - 1);
     paddr = pte + page_offset;
+#endif
+
+    // Unicorn: indentity map guest virtual address to host virtual address
+    vaddr = addr & TARGET_PAGE_MASK;
+    paddr = vaddr;
+    //printf(">>> map address %"PRIx64" to %"PRIx64"\n", vaddr, paddr);
 
     tlb_set_page_with_attrs(cs, vaddr, paddr, cpu_get_mem_attrs(env),
                             prot, mmu_idx, page_size);
@@ -993,7 +1001,7 @@ do_check_protect_pse36:
 
 hwaddr x86_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
     target_ulong pde_addr, pte_addr;
     uint64_t pte;
@@ -1324,7 +1332,7 @@ void do_cpu_sipi(X86CPU *cpu)
 
 void x86_cpu_exec_enter(CPUState *cs)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
 
     CC_SRC = env->eflags & (CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C);
@@ -1424,7 +1432,7 @@ void x86_stl_phys(CPUState *cs, hwaddr addr, uint32_t val)
 
 void x86_stq_phys(CPUState *cs, hwaddr addr, uint64_t val)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
 
     address_space_stq(cs->as, addr, val,

@@ -24,12 +24,12 @@
 
 #define TYPE_M68K_CPU "m68k-cpu"
 
-#define M68K_CPU_CLASS(klass) \
-    OBJECT_CLASS_CHECK(M68kCPUClass, (klass), TYPE_M68K_CPU)
-#define M68K_CPU(obj) \
-    OBJECT_CHECK(M68kCPU, (obj), TYPE_M68K_CPU)
-#define M68K_CPU_GET_CLASS(obj) \
-    OBJECT_GET_CLASS(M68kCPUClass, (obj), TYPE_M68K_CPU)
+#define M68K_CPU_CLASS(uc, klass) \
+    OBJECT_CLASS_CHECK(uc, M68kCPUClass, (klass), TYPE_M68K_CPU)
+#define M68K_CPU(uc, obj) \
+    OBJECT_CHECK(uc, M68kCPU, (obj), TYPE_M68K_CPU)
+#define M68K_CPU_GET_CLASS(uc, obj) \
+    OBJECT_GET_CLASS(uc, M68kCPUClass, (obj), TYPE_M68K_CPU)
 
 /**
  * M68kCPUClass:

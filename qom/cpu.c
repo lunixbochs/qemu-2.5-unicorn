@@ -19,19 +19,15 @@
  */
 
 #include "qemu-common.h"
-#include "qom/cpu.h"
-#include "sysemu/kvm.h"
-#include "qemu/notify.h"
 #include "qemu/log.h"
-#include "qemu/error-report.h"
-#include "sysemu/sysemu.h"
+#include "uc_priv.h"
 
-bool cpu_exists(int64_t id)
+bool cpu_exists(struct uc_struct* uc, int64_t id)
 {
     CPUState *cpu;
 
     CPU_FOREACH(cpu) {
-        CPUClass *cc = CPU_GET_CLASS(cpu);
+        CPUClass *cc = CPU_GET_CLASS(uc, cpu);
 
         if (cc->get_arch_id(cpu) == id) {
             return true;
@@ -40,7 +36,7 @@ bool cpu_exists(int64_t id)
     return false;
 }
 
-CPUState *cpu_generic_init(const char *typename, const char *cpu_model)
+CPUState *cpu_generic_init(struct uc_struct *uc, const char *typename, const char *cpu_model)
 {
     char *str, *name, *featurestr;
     CPUState *cpu;
@@ -51,14 +47,14 @@ CPUState *cpu_generic_init(const char *typename, const char *cpu_model)
     str = g_strdup(cpu_model);
     name = strtok(str, ",");
 
-    oc = cpu_class_by_name(typename, name);
+    oc = cpu_class_by_name(uc, typename, name);
     if (oc == NULL) {
         g_free(str);
         return NULL;
     }
 
-    cpu = CPU(object_new(object_class_get_name(oc)));
-    cc = CPU_GET_CLASS(cpu);
+    cpu = CPU(object_new(uc, object_class_get_name(oc)));
+    cc = CPU_GET_CLASS(uc, cpu);
 
     featurestr = strtok(NULL, ",");
     cc->parse_features(cpu, featurestr, &err);
@@ -81,7 +77,7 @@ out:
 
 bool cpu_paging_enabled(const CPUState *cpu)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     return cc->get_paging_enabled(cpu);
 }
@@ -94,7 +90,7 @@ static bool cpu_common_get_paging_enabled(const CPUState *cpu)
 void cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
                             Error **errp)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     cc->get_memory_mapping(cpu, list, errp);
 }
@@ -119,81 +115,6 @@ void cpu_exit(CPUState *cpu)
     cpu->tcg_exit_req = 1;
 }
 
-int cpu_write_elf32_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
-                             void *opaque)
-{
-    CPUClass *cc = CPU_GET_CLASS(cpu);
-
-    return (*cc->write_elf32_qemunote)(f, cpu, opaque);
-}
-
-static int cpu_common_write_elf32_qemunote(WriteCoreDumpFunction f,
-                                           CPUState *cpu, void *opaque)
-{
-    return -1;
-}
-
-int cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cpu,
-                         int cpuid, void *opaque)
-{
-    CPUClass *cc = CPU_GET_CLASS(cpu);
-
-    return (*cc->write_elf32_note)(f, cpu, cpuid, opaque);
-}
-
-static int cpu_common_write_elf32_note(WriteCoreDumpFunction f,
-                                       CPUState *cpu, int cpuid,
-                                       void *opaque)
-{
-    return -1;
-}
-
-int cpu_write_elf64_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
-                             void *opaque)
-{
-    CPUClass *cc = CPU_GET_CLASS(cpu);
-
-    return (*cc->write_elf64_qemunote)(f, cpu, opaque);
-}
-
-static int cpu_common_write_elf64_qemunote(WriteCoreDumpFunction f,
-                                           CPUState *cpu, void *opaque)
-{
-    return -1;
-}
-
-int cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cpu,
-                         int cpuid, void *opaque)
-{
-    CPUClass *cc = CPU_GET_CLASS(cpu);
-
-    return (*cc->write_elf64_note)(f, cpu, cpuid, opaque);
-}
-
-static int cpu_common_write_elf64_note(WriteCoreDumpFunction f,
-                                       CPUState *cpu, int cpuid,
-                                       void *opaque)
-{
-    return -1;
-}
-
-
-static int cpu_common_gdb_read_register(CPUState *cpu, uint8_t *buf, int reg)
-{
-    return 0;
-}
-
-static int cpu_common_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg)
-{
-    return 0;
-}
-
-bool target_words_bigendian(void);
-static bool cpu_common_virtio_is_big_endian(CPUState *cpu)
-{
-    return target_words_bigendian();
-}
-
 static void cpu_common_noop(CPUState *cpu)
 {
 }
@@ -206,10 +127,9 @@ static bool cpu_common_exec_interrupt(CPUState *cpu, int int_req)
 void cpu_dump_state(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
                     int flags)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     if (cc->dump_state) {
-        cpu_synchronize_state(cpu);
         cc->dump_state(cpu, f, cpu_fprintf, flags);
     }
 }
@@ -217,7 +137,7 @@ void cpu_dump_state(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
 void cpu_dump_statistics(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
                          int flags)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     if (cc->dump_statistics) {
         cc->dump_statistics(cpu, f, cpu_fprintf, flags);
@@ -226,7 +146,7 @@ void cpu_dump_statistics(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
 
 void cpu_reset(CPUState *cpu)
 {
-    CPUClass *klass = CPU_GET_CLASS(cpu);
+    CPUClass *klass = CPU_GET_CLASS(cpu->uc, cpu);
 
     if (klass->reset != NULL) {
         (*klass->reset)(cpu);
@@ -235,7 +155,7 @@ void cpu_reset(CPUState *cpu)
 
 static void cpu_common_reset(CPUState *cpu)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     if (qemu_loglevel_mask(CPU_LOG_RESET)) {
         qemu_log("CPU Reset (CPU %d)\n", cpu->cpu_index);
@@ -260,14 +180,14 @@ static bool cpu_common_has_work(CPUState *cs)
     return false;
 }
 
-ObjectClass *cpu_class_by_name(const char *typename, const char *cpu_model)
+ObjectClass *cpu_class_by_name(struct uc_struct *uc, const char *typename, const char *cpu_model)
 {
-    CPUClass *cc = CPU_CLASS(object_class_by_name(typename));
+    CPUClass *cc = CPU_CLASS(uc, object_class_by_name(uc, typename));
 
-    return cc->class_by_name(cpu_model);
+    return cc->class_by_name(uc, cpu_model);
 }
 
-static ObjectClass *cpu_common_class_by_name(const char *cpu_model)
+static ObjectClass *cpu_common_class_by_name(struct uc_struct *uc, const char *cpu_model)
 {
     return NULL;
 }
@@ -286,7 +206,7 @@ static void cpu_common_parse_features(CPUState *cpu, char *features,
         if (val) {
             *val = 0;
             val++;
-            object_property_parse(OBJECT(cpu), val, featurestr, &err);
+            object_property_parse(cpu->uc, OBJECT(cpu), val, featurestr, &err);
             if (err) {
                 error_propagate(errp, err);
                 return;
@@ -332,10 +252,10 @@ static int64_t cpu_common_get_arch_id(CPUState *cpu)
     return cpu->cpu_index;
 }
 
-static void cpu_class_init(ObjectClass *klass, void *data)
+static void cpu_class_init(struct uc_struct *uc, ObjectClass *klass, void *data)
 {
-    DeviceClass *dc = DEVICE_CLASS(klass);
-    CPUClass *k = CPU_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(uc, klass);
+    CPUClass *k = CPU_CLASS(uc, klass);
 
     k->class_by_name = cpu_common_class_by_name;
     k->parse_features = cpu_common_parse_features;
@@ -344,13 +264,6 @@ static void cpu_class_init(ObjectClass *klass, void *data)
     k->has_work = cpu_common_has_work;
     k->get_paging_enabled = cpu_common_get_paging_enabled;
     k->get_memory_mapping = cpu_common_get_memory_mapping;
-    k->write_elf32_qemunote = cpu_common_write_elf32_qemunote;
-    k->write_elf32_note = cpu_common_write_elf32_note;
-    k->write_elf64_qemunote = cpu_common_write_elf64_qemunote;
-    k->write_elf64_note = cpu_common_write_elf64_note;
-    k->gdb_read_register = cpu_common_gdb_read_register;
-    k->gdb_write_register = cpu_common_gdb_write_register;
-    k->virtio_is_big_endian = cpu_common_virtio_is_big_endian;
     k->debug_excp_handler = cpu_common_noop;
     k->cpu_exec_enter = cpu_common_noop;
     k->cpu_exec_exit = cpu_common_noop;
@@ -374,9 +287,7 @@ static const TypeInfo cpu_type_info = {
     .class_init = cpu_class_init,
 };
 
-static void cpu_register_types(void)
+void cpu_register_types(struct uc_struct *uc)
 {
-    type_register_static(&cpu_type_info);
+    type_register_static(uc, &cpu_type_info);
 }
-
-type_init(cpu_register_types)

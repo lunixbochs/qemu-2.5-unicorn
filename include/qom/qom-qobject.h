@@ -24,7 +24,7 @@
  * Returns: the value of the property, converted to QObject, or NULL if
  * an error occurs.
  */
-struct QObject *object_property_get_qobject(Object *obj, const char *name,
+struct QObject *object_property_get_qobject(struct uc_struct *uc, Object *obj, const char *name,
                                             struct Error **errp);
 
 /**
@@ -36,7 +36,7 @@ struct QObject *object_property_get_qobject(Object *obj, const char *name,
  *
  * Writes a property to a object.
  */
-void object_property_set_qobject(Object *obj, struct QObject *qobj,
+void object_property_set_qobject(struct uc_struct *uc, Object *obj, struct QObject *qobj,
                                  const char *name, struct Error **errp);
 
 #endif

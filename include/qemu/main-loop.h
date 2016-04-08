@@ -25,9 +25,9 @@
 #ifndef QEMU_MAIN_LOOP_H
 #define QEMU_MAIN_LOOP_H 1
 
-#include "block/aio.h"
-
 #define SIG_IPI SIGUSR1
+
+struct uc_struct;
 
 /**
  * qemu_init_main_loop: Set up the process so that it can run the main loop.
@@ -246,7 +246,7 @@ bool qemu_mutex_iothread_locked(void);
  * NOTE: tools currently are single-threaded and qemu_mutex_lock_iothread
  * is a no-op there.
  */
-void qemu_mutex_lock_iothread(void);
+void qemu_mutex_lock_iothread(struct uc_struct* uc);
 
 /**
  * qemu_mutex_unlock_iothread: Unlock the main loop mutex.

@@ -11,7 +11,6 @@
 #ifndef QEMU_KVM_ARM_H
 #define QEMU_KVM_ARM_H
 
-#include "sysemu/kvm.h"
 #include "exec/memory.h"
 
 /**

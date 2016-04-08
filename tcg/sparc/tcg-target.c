@@ -1564,10 +1564,10 @@ static void tcg_target_init(TCGContext *s)
     }
 #endif
 
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffffffff);
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0, ALL_64);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffffffff);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I64], 0, ALL_64);
 
-    tcg_regset_set32(tcg_target_call_clobber_regs, 0,
+    tcg_regset_set32(s->tcg_target_call_clobber_regs, 0,
                      (1 << TCG_REG_G1) |
                      (1 << TCG_REG_G2) |
                      (1 << TCG_REG_G3) |
@@ -1593,7 +1593,7 @@ static void tcg_target_init(TCGContext *s)
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_T1); /* for internal use */
     tcg_regset_set_reg(s->reserved_regs, TCG_REG_T2); /* for internal use */
 
-    tcg_add_target_add_op_defs(sparc_op_defs);
+    tcg_add_target_add_op_defs(s, sparc_op_defs);
 }
 
 #if SPARC64
@@ -1602,41 +1602,6 @@ static void tcg_target_init(TCGContext *s)
 # define ELF_HOST_MACHINE  EM_SPARC32PLUS
 # define ELF_HOST_FLAGS    EF_SPARC_32PLUS
 #endif
-
-typedef struct {
-    DebugFrameHeader h;
-    uint8_t fde_def_cfa[SPARC64 ? 4 : 2];
-    uint8_t fde_win_save;
-    uint8_t fde_ret_save[3];
-} DebugFrame;
-
-static const DebugFrame debug_frame = {
-    .h.cie.len = sizeof(DebugFrameCIE)-4, /* length after .len member */
-    .h.cie.id = -1,
-    .h.cie.version = 1,
-    .h.cie.code_align = 1,
-    .h.cie.data_align = -sizeof(void *) & 0x7f,
-    .h.cie.return_column = 15,            /* o7 */
-
-    /* Total FDE size does not include the "len" member.  */
-    .h.fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, h.fde.cie_offset),
-
-    .fde_def_cfa = {
-#if SPARC64
-        12, 30,                         /* DW_CFA_def_cfa i6, 2047 */
-        (2047 & 0x7f) | 0x80, (2047 >> 7)
-#else
-        13, 30                          /* DW_CFA_def_cfa_register i6 */
-#endif
-    },
-    .fde_win_save = 0x2d,               /* DW_CFA_GNU_window_save */
-    .fde_ret_save = { 9, 15, 31 },      /* DW_CFA_register o7, i7 */
-};
-
-void tcg_register_jit(void *buf, size_t buf_size)
-{
-    tcg_register_jit_int(buf, buf_size, &debug_frame, sizeof(debug_frame));
-}
 
 void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr)
 {

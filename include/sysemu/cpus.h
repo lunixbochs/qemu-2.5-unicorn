@@ -24,6 +24,4 @@ extern int smp_threads;
 #define smp_threads 1
 #endif
 
-void list_cpus(FILE *f, fprintf_function cpu_fprintf, const char *optarg);
-
 #endif

@@ -27,7 +27,6 @@
 #define QEMU_OPTIONS_INTERNAL_H
 
 #include "qemu/option.h"
-#include "qemu/error-report.h"
 
 struct QemuOpt {
     char *name;
@@ -46,7 +45,6 @@ struct QemuOpt {
 struct QemuOpts {
     char *id;
     QemuOptsList *list;
-    Location loc;
     QTAILQ_HEAD(QemuOptHead, QemuOpt) head;
     QTAILQ_ENTRY(QemuOpts) next;
 };

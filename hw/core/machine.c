@@ -525,9 +525,7 @@ static const TypeInfo machine_info = {
     .instance_finalize = machine_finalize,
 };
 
-static void machine_register_types(void)
+void machine_register_types(struct uc_struct *uc)
 {
-    type_register_static(&machine_info);
+    type_register_static(uc, &machine_info);
 }
-
-type_init(machine_register_types)

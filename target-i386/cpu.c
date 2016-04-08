@@ -159,7 +159,7 @@
 #define L2_ITLB_4K_ASSOC       4
 #define L2_ITLB_4K_ENTRIES   512
 
-
+void x86_cpu_register_types(void *);
 
 static void x86_cpu_vendor_words2str(char *dst, uint32_t vendor1,
                                      uint32_t vendor2, uint32_t vendor3)
@@ -228,28 +228,6 @@ static const char *ext4_feature_name[] = {
     NULL, NULL, "xcrypt", "xcrypt-en",
     "ace2", "ace2-en", "phe", "phe-en",
     "pmm", "pmm-en", NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-};
-
-static const char *kvm_feature_name[] = {
-    "kvmclock", "kvm_nopiodelay", "kvm_mmu", "kvmclock",
-    "kvm_asyncpf", "kvm_steal_time", "kvm_pv_eoi", "kvm_pv_unhalt",
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-    "kvmclock-stable-bit", NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL,
-};
-
-static const char *svm_feature_name[] = {
-    "npt", "lbrv", "svm_lock", "nrip_save",
-    "tsc_scale", "vmcb_clean",  "flushbyasid", "decodeassists",
-    NULL, NULL, "pause_filter", NULL,
-    "pfthreshold", NULL, NULL, NULL,
     NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL,
@@ -392,16 +370,6 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
         .cpuid_eax = 0xC0000001, .cpuid_reg = R_EDX,
         .tcg_features = TCG_EXT4_FEATURES,
     },
-    [FEAT_KVM] = {
-        .feat_names = kvm_feature_name,
-        .cpuid_eax = KVM_CPUID_FEATURES, .cpuid_reg = R_EAX,
-        .tcg_features = TCG_KVM_FEATURES,
-    },
-    [FEAT_SVM] = {
-        .feat_names = svm_feature_name,
-        .cpuid_eax = 0x8000000A, .cpuid_reg = R_EDX,
-        .tcg_features = TCG_SVM_FEATURES,
-    },
     [FEAT_7_0_EBX] = {
         .feat_names = cpuid_7_0_ebx_feature_name,
         .cpuid_eax = 7,
@@ -455,21 +423,6 @@ typedef struct ExtSaveArea {
     uint32_t feature, bits;
     uint32_t offset, size;
 } ExtSaveArea;
-
-static const ExtSaveArea ext_save_areas[] = {
-    [2] = { .feature = FEAT_1_ECX, .bits = CPUID_EXT_AVX,
-            .offset = 0x240, .size = 0x100 },
-    [3] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_MPX,
-            .offset = 0x3c0, .size = 0x40  },
-    [4] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_MPX,
-            .offset = 0x400, .size = 0x40  },
-    [5] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_AVX512F,
-            .offset = 0x440, .size = 0x40 },
-    [6] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_AVX512F,
-            .offset = 0x480, .size = 0x200 },
-    [7] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_AVX512F,
-            .offset = 0x680, .size = 0x400 },
-};
 
 const char *get_register_name_32(unsigned int reg)
 {
@@ -631,7 +584,7 @@ static char *x86_cpu_type_name(const char *model_name)
     return g_strdup_printf(X86_CPU_TYPE_NAME("%s"), model_name);
 }
 
-static ObjectClass *x86_cpu_class_by_name(const char *cpu_model)
+static ObjectClass *x86_cpu_class_by_name(struct uc_struct *uc, const char *cpu_model)
 {
     ObjectClass *oc;
     char *typename;
@@ -641,7 +594,7 @@ static ObjectClass *x86_cpu_class_by_name(const char *cpu_model)
     }
 
     typename = x86_cpu_type_name(cpu_model);
-    oc = object_class_by_name(typename);
+    oc = object_class_by_name(uc, typename);
     g_free(typename);
     return oc;
 }
@@ -1501,7 +1454,7 @@ static void report_unavailable_features(FeatureWord w, uint32_t mask)
             assert(reg);
             fprintf(stderr, "warning: %s doesn't support requested feature: "
                 "CPUID.%02XH:%s%s%s [bit %d]\n",
-                kvm_enabled() ? "host" : "TCG",
+                "TCG",
                 f->cpuid_eax, reg,
                 f->feat_names[i] ? "." : "",
                 f->feat_names[i] ? f->feat_names[i] : "", i);
@@ -1509,10 +1462,10 @@ static void report_unavailable_features(FeatureWord w, uint32_t mask)
     }
 }
 
-static void x86_cpuid_version_get_family(Object *obj, Visitor *v, void *opaque,
+static void x86_cpuid_version_get_family(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                          const char *name, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     int64_t value;
 
@@ -1523,10 +1476,10 @@ static void x86_cpuid_version_get_family(Object *obj, Visitor *v, void *opaque,
     visit_type_int(v, &value, name, errp);
 }
 
-static void x86_cpuid_version_set_family(Object *obj, Visitor *v, void *opaque,
+static int x86_cpuid_version_set_family(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                          const char *name, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     const int64_t min = 0;
     const int64_t max = 0xff + 0xf;
@@ -1550,12 +1503,14 @@ static void x86_cpuid_version_set_family(Object *obj, Visitor *v, void *opaque,
     } else {
         env->cpuid_version |= value << 8;
     }
+
+    return 0;
 }
 
-static void x86_cpuid_version_get_model(Object *obj, Visitor *v, void *opaque,
+static void x86_cpuid_version_get_model(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                         const char *name, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     int64_t value;
 
@@ -1564,10 +1519,10 @@ static void x86_cpuid_version_get_model(Object *obj, Visitor *v, void *opaque,
     visit_type_int(v, &value, name, errp);
 }
 
-static void x86_cpuid_version_set_model(Object *obj, Visitor *v, void *opaque,
+static int x86_cpuid_version_set_model(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                         const char *name, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     const int64_t min = 0;
     const int64_t max = 0xff;
@@ -1601,11 +1556,11 @@ static void x86_cpuid_version_get_stepping(Object *obj, Visitor *v,
     visit_type_int(v, &value, name, errp);
 }
 
-static void x86_cpuid_version_set_stepping(Object *obj, Visitor *v,
+static int x86_cpuid_version_set_stepping(struct uc_struct *uc, Object *obj, Visitor *v,
                                            void *opaque, const char *name,
                                            Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     const int64_t min = 0;
     const int64_t max = 0xf;
@@ -1659,11 +1614,13 @@ static void x86_cpuid_set_vendor(Object *obj, const char *value,
         env->cpuid_vendor2 |= ((uint8_t)value[i + 4]) << (8 * i);
         env->cpuid_vendor3 |= ((uint8_t)value[i + 8]) << (8 * i);
     }
+
+    return 0;
 }
 
-static char *x86_cpuid_get_model_id(Object *obj, Error **errp)
+static char *x86_cpuid_get_model_id(struct uc_struct *uc, Object *obj, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     char *value;
     int i;
@@ -1676,10 +1633,10 @@ static char *x86_cpuid_get_model_id(Object *obj, Error **errp)
     return value;
 }
 
-static void x86_cpuid_set_model_id(Object *obj, const char *model_id,
+static int x86_cpuid_set_model_id(struct uc_struct *uc, Object *obj, const char *model_id,
                                    Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     CPUX86State *env = &cpu->env;
     int c, len, i;
 
@@ -1696,22 +1653,24 @@ static void x86_cpuid_set_model_id(Object *obj, const char *model_id,
         }
         env->cpuid_model[i >> 2] |= c << (8 * (i & 3));
     }
+
+    return 0;
 }
 
-static void x86_cpuid_get_tsc_freq(Object *obj, Visitor *v, void *opaque,
+static void x86_cpuid_get_tsc_freq(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                    const char *name, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     int64_t value;
 
     value = cpu->env.tsc_khz * 1000;
     visit_type_int(v, &value, name, errp);
 }
 
-static void x86_cpuid_set_tsc_freq(Object *obj, Visitor *v, void *opaque,
+static int x86_cpuid_set_tsc_freq(struct uc_struct *uc, Object *obj, Visitor *v, void *opaque,
                                    const char *name, Error **errp)
 {
-    X86CPU *cpu = X86_CPU(obj);
+    X86CPU *cpu = X86_CPU(uc, obj);
     const int64_t min = 0;
     const int64_t max = INT64_MAX;
     Error *local_err = NULL;
@@ -1805,46 +1764,6 @@ static void x86_cpu_get_feature_words(Object *obj, Visitor *v, void *opaque,
     error_propagate(errp, err);
 }
 
-static void x86_get_hv_spinlocks(Object *obj, Visitor *v, void *opaque,
-                                 const char *name, Error **errp)
-{
-    X86CPU *cpu = X86_CPU(obj);
-    int64_t value = cpu->hyperv_spinlock_attempts;
-
-    visit_type_int(v, &value, name, errp);
-}
-
-static void x86_set_hv_spinlocks(Object *obj, Visitor *v, void *opaque,
-                                 const char *name, Error **errp)
-{
-    const int64_t min = 0xFFF;
-    const int64_t max = UINT_MAX;
-    X86CPU *cpu = X86_CPU(obj);
-    Error *err = NULL;
-    int64_t value;
-
-    visit_type_int(v, &value, name, &err);
-    if (err) {
-        error_propagate(errp, err);
-        return;
-    }
-
-    if (value < min || value > max) {
-        error_setg(errp, "Property %s.%s doesn't take value %" PRId64
-                   " (minimum: %" PRId64 ", maximum: %" PRId64 ")",
-                   object_get_typename(obj), name ? name : "null",
-                   value, min, max);
-        return;
-    }
-    cpu->hyperv_spinlock_attempts = value;
-}
-
-static PropertyInfo qdev_prop_spinlocks = {
-    .name  = "int",
-    .get   = x86_get_hv_spinlocks,
-    .set   = x86_set_hv_spinlocks,
-};
-
 /* Convert all '_' in a feature string option name to '-', to make feature
  * name conform to QOM property naming rule, which uses '-' instead of '_'.
  */
@@ -1860,7 +1779,7 @@ static inline void feat2prop(char *s)
 static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
                                      Error **errp)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     char *featurestr; /* Single 'key=value" string being parsed */
     FeatureWord w;
     /* Features to be added */
@@ -1892,12 +1811,10 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
                     return;
                 }
                 if (numvalue < 0x80000000) {
-                    error_report("xlevel value shall always be >= 0x80000000"
-                                 ", fixup will be removed in future versions");
                     numvalue += 0x80000000;
                 }
                 snprintf(num, sizeof(num), "%" PRIu32, numvalue);
-                object_property_parse(OBJECT(cpu), num, featurestr, &local_err);
+                object_property_parse(cs->uc, OBJECT(cpu), num, featurestr, &local_err);
             } else if (!strcmp(featurestr, "tsc-freq")) {
                 int64_t tsc_freq;
                 char *err;
@@ -1910,7 +1827,7 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
                     return;
                 }
                 snprintf(num, sizeof(num), "%" PRId64, tsc_freq);
-                object_property_parse(OBJECT(cpu), num, "tsc-frequency",
+                object_property_parse(cs->uc, OBJECT(cpu), num, "tsc-frequency",
                                       &local_err);
             } else if (!strcmp(featurestr, "hv-spinlocks")) {
                 char *err;
@@ -1922,19 +1839,16 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
                     return;
                 }
                 if (numvalue < min) {
-                    error_report("hv-spinlocks value shall always be >= 0x%x"
-                                 ", fixup will be removed in future versions",
-                                 min);
                     numvalue = min;
                 }
                 snprintf(num, sizeof(num), "%" PRId32, numvalue);
-                object_property_parse(OBJECT(cpu), num, featurestr, &local_err);
+                object_property_parse(cs->uc, OBJECT(cpu), num, featurestr, &local_err);
             } else {
-                object_property_parse(OBJECT(cpu), val, featurestr, &local_err);
+                object_property_parse(cs->uc, OBJECT(cpu), val, featurestr, &local_err);
             }
         } else {
             feat2prop(featurestr);
-            object_property_parse(OBJECT(cpu), "on", featurestr, &local_err);
+            object_property_parse(cs->uc, OBJECT(cpu), "on", featurestr, &local_err);
         }
         if (local_err) {
             error_propagate(errp, local_err);
@@ -1946,7 +1860,7 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
     if (cpu->host_features) {
         for (w = 0; w < FEATURE_WORDS; w++) {
             env->features[w] =
-                x86_cpu_get_supported_feature_word(w, cpu->migratable);
+                x86_cpu_get_supported_feature_word(env->uc, w);
         }
     }
 
@@ -2055,8 +1969,7 @@ static int x86_cpu_filter_features(X86CPU *cpu)
     int rv = 0;
 
     for (w = 0; w < FEATURE_WORDS; w++) {
-        uint32_t host_feat =
-            x86_cpu_get_supported_feature_word(w, cpu->migratable);
+        uint32_t host_feat = x86_cpu_get_supported_feature_word(env->uc, w);
         uint32_t requested_features = env->features[w];
         env->features[w] &= host_feat;
         cpu->filtered_features[w] = requested_features & ~env->features[w];
@@ -2169,7 +2082,7 @@ out:
     if (error != NULL) {
         error_propagate(errp, error);
         if (cpu) {
-            object_unref(OBJECT(cpu));
+            object_unref(uc, OBJECT(cpu));
             cpu = NULL;
         }
     }
@@ -2218,7 +2131,7 @@ static void x86_register_cpudef_type(X86CPUDefinition *def)
         .class_data = def,
     };
 
-    type_register(&ti);
+    type_register(uc, &ti);
     g_free(typename);
 }
 
@@ -2610,8 +2523,8 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 /* CPUClass::reset() */
 static void x86_cpu_reset(CPUState *s)
 {
-    X86CPU *cpu = X86_CPU(s);
-    X86CPUClass *xcc = X86_CPU_GET_CLASS(cpu);
+    X86CPU *cpu = X86_CPU(s->uc, s);
+    X86CPUClass *xcc = X86_CPU_GET_CLASS(s->uc, cpu);
     CPUX86State *env = &cpu->env;
     int i;
 
@@ -2810,14 +2723,13 @@ static void x86_cpu_apic_realize(X86CPU *cpu, Error **errp)
 #define IS_AMD_CPU(env) ((env)->cpuid_vendor1 == CPUID_VENDOR_AMD_1 && \
                          (env)->cpuid_vendor2 == CPUID_VENDOR_AMD_2 && \
                          (env)->cpuid_vendor3 == CPUID_VENDOR_AMD_3)
-static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+static int x86_cpu_realizefn(struct uc_struct *uc, DeviceState *dev, Error **errp)
 {
     CPUState *cs = CPU(dev);
-    X86CPU *cpu = X86_CPU(dev);
-    X86CPUClass *xcc = X86_CPU_GET_CLASS(dev);
+    X86CPU *cpu = X86_CPU(uc, dev);
+    X86CPUClass *xcc = X86_CPU_GET_CLASS(uc, dev);
     CPUX86State *env = &cpu->env;
     Error *local_err = NULL;
-    static bool ht_warned;
 
     if (cpu->apic_id < 0) {
         error_setg(errp, "apic-id property was not initialized properly");
@@ -2837,17 +2749,14 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
            & CPUID_EXT2_AMD_ALIASES);
     }
 
-
     if (x86_cpu_filter_features(cpu) && cpu->enforce_cpuid) {
         error_setg(&local_err,
-                   kvm_enabled() ?
-                       "Host doesn't support requested features" :
                        "TCG doesn't support requested features");
         goto out;
     }
 
 #ifndef CONFIG_USER_ONLY
-    qemu_register_reset(x86_cpu_machine_reset_cb, cpu);
+    //qemu_register_reset(x86_cpu_machine_reset_cb, cpu);
 
     if (cpu->env.features[FEAT_1_EDX] & CPUID_APIC || smp_cpus > 1) {
         x86_cpu_apic_create(cpu, &local_err);
@@ -3101,28 +3010,28 @@ static int64_t x86_cpu_get_arch_id(CPUState *cs)
 
 static bool x86_cpu_get_paging_enabled(const CPUState *cs)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
 
     return cpu->env.cr[0] & CR0_PG_MASK;
 }
 
 static void x86_cpu_set_pc(CPUState *cs, vaddr value)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
 
     cpu->env.eip = value;
 }
 
 static void x86_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
 
     cpu->env.eip = tb->pc - tb->cs_base;
 }
 
 static bool x86_cpu_has_work(CPUState *cs)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
 
     return ((cs->interrupt_request & (CPU_INTERRUPT_HARD |
@@ -3178,8 +3087,6 @@ static void x86_cpu_common_class_init(ObjectClass *oc, void *data)
     cc->dump_state = x86_cpu_dump_state;
     cc->set_pc = x86_cpu_set_pc;
     cc->synchronize_from_tb = x86_cpu_synchronize_from_tb;
-    cc->gdb_read_register = x86_cpu_gdb_read_register;
-    cc->gdb_write_register = x86_cpu_gdb_write_register;
     cc->get_arch_id = x86_cpu_get_arch_id;
     cc->get_paging_enabled = x86_cpu_get_paging_enabled;
 #ifdef CONFIG_USER_ONLY
@@ -3187,13 +3094,7 @@ static void x86_cpu_common_class_init(ObjectClass *oc, void *data)
 #else
     cc->get_memory_mapping = x86_cpu_get_memory_mapping;
     cc->get_phys_page_debug = x86_cpu_get_phys_page_debug;
-    cc->write_elf64_note = x86_cpu_write_elf64_note;
-    cc->write_elf64_qemunote = x86_cpu_write_elf64_qemunote;
-    cc->write_elf32_note = x86_cpu_write_elf32_note;
-    cc->write_elf32_qemunote = x86_cpu_write_elf32_qemunote;
-    cc->vmsd = &vmstate_x86_cpu;
 #endif
-    cc->gdb_num_core_regs = CPU_NB_REGS * 2 + 25;
 #ifndef CONFIG_USER_ONLY
     cc->debug_excp_handler = breakpoint_handler;
 #endif
@@ -3207,27 +3108,25 @@ static void x86_cpu_common_class_init(ObjectClass *oc, void *data)
     dc->cannot_destroy_with_object_finalize_yet = true;
 }
 
-static const TypeInfo x86_cpu_type_info = {
+void x86_cpu_register_types(void *opaque)
+{
+	const TypeInfo x86_cpu_type_info = {
     .name = TYPE_X86_CPU,
     .parent = TYPE_CPU,
+		.instance_userdata = opaque,
     .instance_size = sizeof(X86CPU),
     .instance_init = x86_cpu_initfn,
     .abstract = true,
     .class_size = sizeof(X86CPUClass),
     .class_init = x86_cpu_common_class_init,
-};
+	};
 
-static void x86_cpu_register_types(void)
-{
+	//printf("... register X86 cpu\n");
     int i;
 
-    type_register_static(&x86_cpu_type_info);
+    type_register_static(opaque, &x86_cpu_type_info);
     for (i = 0; i < ARRAY_SIZE(builtin_x86_defs); i++) {
-        x86_register_cpudef_type(&builtin_x86_defs[i]);
+        x86_register_cpudef_type(opaque, &builtin_x86_defs[i]);
     }
-#ifdef CONFIG_KVM
-    type_register_static(&host_x86_cpu_type_info);
-#endif
+	//printf("... END OF register X86 cpu\n");
 }
-
-type_init(x86_cpu_register_types)

@@ -23,9 +23,9 @@
 #include "hw/hw.h"
 #include "hw/mips/cpudevs.h"
 #include "cpu.h"
-#include "sysemu/kvm.h"
-#include "kvm_mips.h"
+//#include "kvm_mips.h"
 
+#if 0
 static void cpu_mips_irq_request(void *opaque, int irq, int level)
 {
     MIPSCPU *cpu = opaque;
@@ -44,7 +44,6 @@ static void cpu_mips_irq_request(void *opaque, int irq, int level)
 
     } else {
         env->CP0_Cause &= ~(1 << (irq + CP0Ca_IP));
-
         if (kvm_enabled() && irq == 2) {
             kvm_mips_set_interrupt(cpu, irq, level);
         }
@@ -56,9 +55,11 @@ static void cpu_mips_irq_request(void *opaque, int irq, int level)
         cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
     }
 }
+#endif
 
 void cpu_mips_irq_init_cpu(CPUMIPSState *env)
 {
+#if 0
     qemu_irq *qi;
     int i;
 
@@ -66,13 +67,16 @@ void cpu_mips_irq_init_cpu(CPUMIPSState *env)
     for (i = 0; i < 8; i++) {
         env->irq[i] = qi[i];
     }
+#endif
 }
 
 void cpu_mips_soft_irq(CPUMIPSState *env, int irq, int level)
 {
+#if 0
     if (irq < 0 || irq > 2) {
         return;
     }
 
     qemu_set_irq(env->irq[irq], level);
+#endif
 }

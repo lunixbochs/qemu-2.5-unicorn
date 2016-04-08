@@ -1,3 +1,5 @@
+DEF_HELPER_4(uc_tracecode, void, i32, i32, ptr, i64)
+
 DEF_HELPER_1(bitrev, i32, i32)
 DEF_HELPER_1(ff1, i32, i32)
 DEF_HELPER_2(sats, i32, i32, i32)

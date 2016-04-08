@@ -49,32 +49,11 @@ typedef struct MemoryRegionPortio {
 extern const MemoryRegionOps unassigned_io_ops;
 #endif
 
-void cpu_outb(pio_addr_t addr, uint8_t val);
-void cpu_outw(pio_addr_t addr, uint16_t val);
-void cpu_outl(pio_addr_t addr, uint32_t val);
-uint8_t cpu_inb(pio_addr_t addr);
-uint16_t cpu_inw(pio_addr_t addr);
-uint32_t cpu_inl(pio_addr_t addr);
-
-typedef struct PortioList {
-    const struct MemoryRegionPortio *ports;
-    Object *owner;
-    struct MemoryRegion *address_space;
-    unsigned nr;
-    struct MemoryRegion **regions;
-    void *opaque;
-    const char *name;
-    bool flush_coalesced_mmio;
-} PortioList;
-
-void portio_list_init(PortioList *piolist, Object *owner,
-                      const struct MemoryRegionPortio *callbacks,
-                      void *opaque, const char *name);
-void portio_list_set_flush_coalesced(PortioList *piolist);
-void portio_list_destroy(PortioList *piolist);
-void portio_list_add(PortioList *piolist,
-                     struct MemoryRegion *address_space,
-                     uint32_t addr);
-void portio_list_del(PortioList *piolist);
+void cpu_outb(struct uc_struct *uc, pio_addr_t addr, uint8_t val);
+void cpu_outw(struct uc_struct *uc, pio_addr_t addr, uint16_t val);
+void cpu_outl(struct uc_struct *uc, pio_addr_t addr, uint32_t val);
+uint8_t cpu_inb(struct uc_struct *uc, pio_addr_t addr);
+uint16_t cpu_inw(struct uc_struct *uc, pio_addr_t addr);
+uint32_t cpu_inl(struct uc_struct *uc, pio_addr_t addr);
 
 #endif /* IOPORT_H */

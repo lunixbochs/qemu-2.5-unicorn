@@ -593,8 +593,11 @@ struct CPUMIPSState {
 #endif
 
     const mips_def_t *cpu_model;
-    void *irq[8];
-    QEMUTimer *timer; /* Internal timer */
+    //void *irq[8];
+    //QEMUTimer *timer; /* Internal timer */
+
+    // Unicorn engine
+    struct uc_struct *uc;
 };
 
 #include "cpu-qom.h"

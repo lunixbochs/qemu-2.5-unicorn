@@ -20,4 +20,8 @@ void rc4030_dma_write(void *dma, uint8_t *buf, int len);
 
 DeviceState *rc4030_init(rc4030_dma **dmas, MemoryRegion **dma_mr);
 
+void mips_machine_init(struct uc_struct *uc);
+
+void mips_cpu_register_types(void *opaque);
+
 #endif

@@ -421,7 +421,7 @@ target_ulong helper_ctz(target_ulong t0)
     return ctztl(t0);
 }
 
-target_ulong helper_clz(target_ulong t0)
+target_ulong helper_clz_x86(target_ulong t0)
 {
     return clztl(t0);
 }

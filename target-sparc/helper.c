@@ -47,14 +47,14 @@ target_ulong helper_popc(target_ulong val)
 void helper_tick_set_count(void *opaque, uint64_t count)
 {
 #if !defined(CONFIG_USER_ONLY)
-    cpu_tick_set_count(opaque, count);
+    // cpu_tick_set_count(opaque, count);
 #endif
 }
 
 uint64_t helper_tick_get_count(void *opaque)
 {
 #if !defined(CONFIG_USER_ONLY)
-    return cpu_tick_get_count(opaque);
+    return 0;   //cpu_tick_get_count(opaque);
 #else
     return 0;
 #endif
@@ -63,7 +63,7 @@ uint64_t helper_tick_get_count(void *opaque)
 void helper_tick_set_limit(void *opaque, uint64_t limit)
 {
 #if !defined(CONFIG_USER_ONLY)
-    cpu_tick_set_limit(opaque, limit);
+    // cpu_tick_set_limit(opaque, limit);
 #endif
 }
 #endif
@@ -241,7 +241,7 @@ target_ulong helper_tsubcctv(CPUSPARCState *env, target_ulong src1,
     helper_raise_exception(env, TT_TOVF);
 }
 
-#ifndef TARGET_SPARC64
+//#ifndef TARGET_SPARC64
 void helper_power_down(CPUSPARCState *env)
 {
     CPUState *cs = CPU(sparc_env_get_cpu(env));
@@ -252,4 +252,4 @@ void helper_power_down(CPUSPARCState *env)
     env->npc = env->pc + 4;
     cpu_loop_exit(cs);
 }
-#endif
+//#endif

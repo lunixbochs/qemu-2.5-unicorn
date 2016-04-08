@@ -112,7 +112,7 @@ static inline unsigned int aarch64_banked_spsr_index(unsigned int el)
 int bank_number(int mode);
 void switch_mode(CPUARMState *, int);
 void arm_cpu_register_gdb_regs_for_features(ARMCPU *cpu);
-void arm_translate_init(void);
+void arm_translate_init(struct uc_struct *uc);
 
 enum arm_fprounding {
     FPROUNDING_TIEEVEN,

@@ -48,15 +48,15 @@ typedef struct AccelClass {
 #define ACCEL_CLASS_SUFFIX  "-" TYPE_ACCEL
 #define ACCEL_CLASS_NAME(a) (a ACCEL_CLASS_SUFFIX)
 
-#define ACCEL_CLASS(klass) \
-    OBJECT_CLASS_CHECK(AccelClass, (klass), TYPE_ACCEL)
-#define ACCEL(obj) \
-    OBJECT_CHECK(AccelState, (obj), TYPE_ACCEL)
-#define ACCEL_GET_CLASS(obj) \
-    OBJECT_GET_CLASS(AccelClass, (obj), TYPE_ACCEL)
-
-extern int tcg_tb_size;
+#define ACCEL_CLASS(uc, klass) \
+    OBJECT_CLASS_CHECK(uc, AccelClass, (klass), TYPE_ACCEL)
+#define ACCEL(uc, obj) \
+    OBJECT_CHECK(uc, AccelState, (obj), TYPE_ACCEL)
+#define ACCEL_GET_CLASS(uc, obj) \
+    OBJECT_GET_CLASS(uc, AccelClass, (obj), TYPE_ACCEL)
 
 int configure_accelerator(MachineState *ms);
+
+void register_accel_types(struct uc_struct *uc);
 
 #endif

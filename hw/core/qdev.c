@@ -136,12 +136,6 @@ DeviceState *qdev_create(BusState *bus, const char *name)
 
     dev = qdev_try_create(bus, name);
     if (!dev) {
-        if (bus) {
-            error_report("Unknown device '%s' for bus '%s'", name,
-                         object_get_typename(OBJECT(bus)));
-        } else {
-            error_report("Unknown device '%s' for default sysbus", name);
-        }
         abort();
     }
 
@@ -150,12 +144,13 @@ DeviceState *qdev_create(BusState *bus, const char *name)
 
 DeviceState *qdev_try_create(BusState *bus, const char *type)
 {
+#if 0
     DeviceState *dev;
 
-    if (object_class_by_name(type) == NULL) {
+    if (object_class_by_name(NULL, type) == NULL) { // no need to fix. aq
         return NULL;
     }
-    dev = DEVICE(object_new(type));
+    dev = DEVICE(object_new(NULL, type));   // no need to fix. aq
     if (!dev) {
         return NULL;
     }
@@ -167,6 +162,8 @@ DeviceState *qdev_try_create(BusState *bus, const char *type)
     qdev_set_parent_bus(dev, bus);
     object_unref(OBJECT(dev));
     return dev;
+#endif
+    return NULL;
 }
 
 static QTAILQ_HEAD(device_listeners, DeviceListener) device_listeners
@@ -1096,11 +1093,8 @@ static void device_set_realized(Object *obj, bool value, Error **errp)
         Error **local_errp = NULL;
         QLIST_FOREACH(bus, &dev->child_bus, sibling) {
             local_errp = local_err ? NULL : &local_err;
-            object_property_set_bool(OBJECT(bus), false, "realized",
+            object_property_set_bool(uc, OBJECT(bus), false, "realized",
                                      local_errp);
-        }
-        if (qdev_get_vmsd(dev)) {
-            vmstate_unregister(dev, qdev_get_vmsd(dev), dev);
         }
         if (dc->unrealize) {
             local_errp = local_err ? NULL : &local_err;
@@ -1115,16 +1109,12 @@ static void device_set_realized(Object *obj, bool value, Error **errp)
     }
 
     dev->realized = value;
-    return;
+    return 0;
 
 child_realize_fail:
     QLIST_FOREACH(bus, &dev->child_bus, sibling) {
-        object_property_set_bool(OBJECT(bus), false, "realized",
+        object_property_set_bool(uc, OBJECT(bus), false, "realized",
                                  NULL);
-    }
-
-    if (qdev_get_vmsd(dev)) {
-        vmstate_unregister(dev, qdev_get_vmsd(dev), dev);
     }
 
 post_realize_fail:
@@ -1308,37 +1298,18 @@ static const TypeInfo device_type_info = {
     .class_size = sizeof(DeviceClass),
 };
 
-static void qbus_initfn(Object *obj)
+static void qbus_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    BusState *bus = BUS(obj);
-
-    QTAILQ_INIT(&bus->children);
-    object_property_add_link(obj, QDEV_HOTPLUG_HANDLER_PROPERTY,
-                             TYPE_HOTPLUG_HANDLER,
-                             (Object **)&bus->hotplug_handler,
-                             object_property_allow_set_link,
-                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
-                             NULL);
-    object_property_add_bool(obj, "realized",
-                             bus_get_realized, bus_set_realized, NULL);
 }
 
-static char *default_bus_get_fw_dev_path(DeviceState *dev)
+static void bus_class_init(struct uc_struct *uc, ObjectClass *class, void *data)
 {
-    return g_strdup(object_get_typename(OBJECT(dev)));
-}
-
-static void bus_class_init(ObjectClass *class, void *data)
-{
-    BusClass *bc = BUS_CLASS(class);
-
     class->unparent = bus_unparent;
-    bc->get_fw_dev_path = default_bus_get_fw_dev_path;
 }
 
-static void qbus_finalize(Object *obj)
+static void qbus_finalize(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    BusState *bus = BUS(obj);
+    BusState *bus = BUS(uc, obj);
 
     g_free((char *)bus->name);
 }
@@ -1354,10 +1325,8 @@ static const TypeInfo bus_info = {
     .class_init = bus_class_init,
 };
 
-static void qdev_register_types(void)
+void qdev_register_types(struct uc_struct *uc)
 {
-    type_register_static(&bus_info);
-    type_register_static(&device_type_info);
+    type_register_static(uc, &bus_info);
+    type_register_static(uc, &device_type_info);
 }
-
-type_init(qdev_register_types)

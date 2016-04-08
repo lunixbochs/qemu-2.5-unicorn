@@ -22,6 +22,7 @@
 #include "qemu/log.h"
 #include "exec/helper-proto.h"
 #include "exec/cpu_ldst.h"
+#include "uc_priv.h"
 
 //#define DEBUG_PCALL
 
@@ -594,7 +595,7 @@ static int exception_has_error_code(int intno)
 /* protected mode interrupt */
 static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
                                    int error_code, unsigned int next_eip,
-                                   int is_hw)
+                                   int is_hw)   // qq
 {
     SegmentCache *dt;
     target_ulong ptr, ssp;
@@ -846,7 +847,7 @@ static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
 
 /* 64 bit interrupt */
 static void do_interrupt64(CPUX86State *env, int intno, int is_int,
-                           int error_code, target_ulong next_eip, int is_hw)
+                           int error_code, target_ulong next_eip, int is_hw)    // qq
 {
     SegmentCache *dt;
     target_ulong ptr;
@@ -979,6 +980,18 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
 #else
 void helper_syscall(CPUX86State *env, int next_eip_addend)
 {
+    // Unicorn: call registered syscall hooks
+    struct hook *hook;
+    HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN) {
+        if (!HOOK_BOUND_CHECK(hook, env->eip))
+            continue;
+        if (hook->insn == UC_X86_INS_SYSCALL)
+            ((uc_cb_insn_syscall_t)hook->callback)(env->uc, hook->user_data);
+    }
+
+    env->eip += next_eip_addend;
+    return;
+
     int selector;
 
     if (!(env->efer & MSR_EFER_SCE)) {
@@ -1088,7 +1101,7 @@ void helper_sysret(CPUX86State *env, int dflag)
 
 /* real mode interrupt */
 static void do_interrupt_real(CPUX86State *env, int intno, int is_int,
-                              int error_code, unsigned int next_eip)
+                              int error_code, unsigned int next_eip)    // qq
 {
     SegmentCache *dt;
     target_ulong ptr, ssp;
@@ -1202,15 +1215,15 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
 
     if (qemu_loglevel_mask(CPU_LOG_INT)) {
         if ((env->cr[0] & CR0_PE_MASK)) {
-            static int count;
+            //static int count;
 
-            qemu_log("%6d: v=%02x e=%04x i=%d cpl=%d IP=%04x:" TARGET_FMT_lx
-                     " pc=" TARGET_FMT_lx " SP=%04x:" TARGET_FMT_lx,
-                     count, intno, error_code, is_int,
-                     env->hflags & HF_CPL_MASK,
-                     env->segs[R_CS].selector, env->eip,
-                     (int)env->segs[R_CS].base + env->eip,
-                     env->segs[R_SS].selector, env->regs[R_ESP]);
+            //qemu_log("%6d: v=%02x e=%04x i=%d cpl=%d IP=%04x:" TARGET_FMT_lx
+            //         " pc=" TARGET_FMT_lx " SP=%04x:" TARGET_FMT_lx,
+            //         count, intno, error_code, is_int,
+            //         env->hflags & HF_CPL_MASK,
+            //         env->segs[R_CS].selector, env->eip,
+            //         (int)env->segs[R_CS].base + env->eip,
+            //         env->segs[R_SS].selector, env->regs[R_ESP]);
             if (intno == 0x0e) {
                 qemu_log(" CR2=" TARGET_FMT_lx, env->cr[2]);
             } else {
@@ -1231,7 +1244,7 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
                 qemu_log("\n");
             }
 #endif
-            count++;
+            //count++;
         }
     }
     if (env->cr[0] & CR0_PE_MASK) {
@@ -1274,7 +1287,7 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
 
 void x86_cpu_do_interrupt(CPUState *cs)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
 
 #if defined(CONFIG_USER_ONLY)
@@ -1307,7 +1320,7 @@ void do_interrupt_x86_hardirq(CPUX86State *env, int intno, int is_hw)
 
 bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
-    X86CPU *cpu = X86_CPU(cs);
+    X86CPU *cpu = X86_CPU(cs->uc, cs);
     CPUX86State *env = &cpu->env;
     bool ret = false;
 
@@ -2332,8 +2345,20 @@ void helper_lret_protected(CPUX86State *env, int shift, int addend)
     helper_ret_protected(env, shift, 0, addend, GETPC());
 }
 
-void helper_sysenter(CPUX86State *env)
+void helper_sysenter(CPUX86State *env, int next_eip_addend)
 {
+    // Unicorn: call registered SYSENTER hooks
+    struct hook *hook;
+    HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN) {
+        if (!HOOK_BOUND_CHECK(hook, env->eip))
+            continue;
+        if (hook->insn == UC_X86_INS_SYSENTER)
+            ((uc_cb_insn_syscall_t)hook->callback)(env->uc, hook->user_data);
+    }
+
+    env->eip += next_eip_addend;
+    return;
+
     if (env->sysenter_cs == 0) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
     }
@@ -2573,7 +2598,6 @@ void helper_verw(CPUX86State *env, target_ulong selector1)
     CC_SRC = eflags | CC_Z;
 }
 
-#if defined(CONFIG_USER_ONLY)
 void cpu_x86_load_seg(CPUX86State *env, int seg_reg, int selector)
 {
     if (!(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK)) {
@@ -2587,7 +2611,6 @@ void cpu_x86_load_seg(CPUX86State *env, int seg_reg, int selector)
         helper_load_seg(env, seg_reg, selector);
     }
 }
-#endif
 
 /* check if Port I/O is allowed in TSS */
 static inline void check_io(CPUX86State *env, int addr, int size,

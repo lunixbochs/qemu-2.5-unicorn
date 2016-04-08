@@ -308,37 +308,11 @@ int qemu_openpty_raw(int *aslave, char *pty_name);
 
 /* Error handling.  */
 
-void QEMU_NORETURN hw_error(const char *fmt, ...) GCC_FMT_ATTR(1, 2);
+void tcg_exec_init(struct uc_struct *uc, unsigned long tb_size);
+bool tcg_enabled(struct uc_struct *uc);
 
-struct ParallelIOArg {
-    void *buffer;
-    int count;
-};
-
-typedef int (*DMA_transfer_handler) (void *opaque, int nchan, int pos, int size);
-
-typedef uint64_t pcibus_t;
-
-typedef struct PCIHostDeviceAddress {
-    unsigned int domain;
-    unsigned int bus;
-    unsigned int slot;
-    unsigned int function;
-} PCIHostDeviceAddress;
-
-void tcg_exec_init(unsigned long tb_size);
-bool tcg_enabled(void);
-
-void cpu_exec_init_all(void);
-
-/* CPU save/load.  */
-#ifdef CPU_SAVE_VERSION
-void cpu_save(QEMUFile *f, void *opaque);
-int cpu_load(QEMUFile *f, void *opaque, int version_id);
-#endif
-
-/* Unblock cpu */
-void qemu_cpu_kick_self(void);
+struct uc_struct;
+void cpu_exec_init_all(struct uc_struct *uc);
 
 /* work queue */
 struct qemu_work_item {
@@ -348,74 +322,6 @@ struct qemu_work_item {
     int done;
     bool free;
 };
-
-
-/**
- * Sends a (part of) iovec down a socket, yielding when the socket is full, or
- * Receives data into a (part of) iovec from a socket,
- * yielding when there is no data in the socket.
- * The same interface as qemu_sendv_recvv(), with added yielding.
- * XXX should mark these as coroutine_fn
- */
-ssize_t qemu_co_sendv_recvv(int sockfd, struct iovec *iov, unsigned iov_cnt,
-                            size_t offset, size_t bytes, bool do_send);
-#define qemu_co_recvv(sockfd, iov, iov_cnt, offset, bytes) \
-  qemu_co_sendv_recvv(sockfd, iov, iov_cnt, offset, bytes, false)
-#define qemu_co_sendv(sockfd, iov, iov_cnt, offset, bytes) \
-  qemu_co_sendv_recvv(sockfd, iov, iov_cnt, offset, bytes, true)
-
-/**
- * The same as above, but with just a single buffer
- */
-ssize_t qemu_co_send_recv(int sockfd, void *buf, size_t bytes, bool do_send);
-#define qemu_co_recv(sockfd, buf, bytes) \
-  qemu_co_send_recv(sockfd, buf, bytes, false)
-#define qemu_co_send(sockfd, buf, bytes) \
-  qemu_co_send_recv(sockfd, buf, bytes, true)
-
-typedef struct QEMUIOVector {
-    struct iovec *iov;
-    int niov;
-    int nalloc;
-    size_t size;
-} QEMUIOVector;
-
-void qemu_iovec_init(QEMUIOVector *qiov, int alloc_hint);
-void qemu_iovec_init_external(QEMUIOVector *qiov, struct iovec *iov, int niov);
-void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len);
-void qemu_iovec_concat(QEMUIOVector *dst,
-                       QEMUIOVector *src, size_t soffset, size_t sbytes);
-size_t qemu_iovec_concat_iov(QEMUIOVector *dst,
-                             struct iovec *src_iov, unsigned int src_cnt,
-                             size_t soffset, size_t sbytes);
-bool qemu_iovec_is_zero(QEMUIOVector *qiov);
-void qemu_iovec_destroy(QEMUIOVector *qiov);
-void qemu_iovec_reset(QEMUIOVector *qiov);
-size_t qemu_iovec_to_buf(QEMUIOVector *qiov, size_t offset,
-                         void *buf, size_t bytes);
-size_t qemu_iovec_from_buf(QEMUIOVector *qiov, size_t offset,
-                           const void *buf, size_t bytes);
-size_t qemu_iovec_memset(QEMUIOVector *qiov, size_t offset,
-                         int fillc, size_t bytes);
-ssize_t qemu_iovec_compare(QEMUIOVector *a, QEMUIOVector *b);
-void qemu_iovec_clone(QEMUIOVector *dest, const QEMUIOVector *src, void *buf);
-void qemu_iovec_discard_back(QEMUIOVector *qiov, size_t bytes);
-
-bool buffer_is_zero(const void *buf, size_t len);
-
-void qemu_progress_init(int enabled, float min_skip);
-void qemu_progress_end(void);
-void qemu_progress_print(float delta, int max);
-const char *qemu_get_vm_name(void);
-
-#define QEMU_FILE_TYPE_BIOS   0
-#define QEMU_FILE_TYPE_KEYMAP 1
-char *qemu_find_file(int type, const char *name);
-
-/* OS specific functions */
-void os_setup_early_signal_handling(void);
-char *os_find_datadir(void);
-void os_parse_cmd_args(int index, const char *optarg);
 
 /* Convert a byte between binary and BCD.  */
 static inline uint8_t to_bcd(uint8_t val)

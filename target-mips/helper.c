@@ -23,7 +23,6 @@
 #include <inttypes.h>
 
 #include "cpu.h"
-#include "sysemu/kvm.h"
 #include "exec/cpu_ldst.h"
 
 enum {
@@ -134,19 +133,6 @@ static int get_physical_address (CPUMIPSState *env, hwaddr *physical,
 
 #define KVM_KSEG0_BASE  0x40000000UL
 #define KVM_KSEG2_BASE  0x60000000UL
-
-    if (kvm_enabled()) {
-        /* KVM T&E adds guest kernel segments in useg */
-        if (real_address >= KVM_KSEG0_BASE) {
-            if (real_address < KVM_KSEG2_BASE) {
-                /* kseg0 */
-                address += KSEG0_BASE - KVM_KSEG0_BASE;
-            } else if (real_address <= USEG_LIMIT) {
-                /* kseg2/3 */
-                address += KSEG2_BASE - KVM_KSEG2_BASE;
-            }
-        }
-    }
 
     if (address <= USEG_LIMIT) {
         /* useg */
@@ -305,7 +291,7 @@ static void raise_mmu_exception(CPUMIPSState *env, target_ulong address,
 #if !defined(CONFIG_USER_ONLY)
 hwaddr mips_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
-    MIPSCPU *cpu = MIPS_CPU(cs);
+    MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
     hwaddr phys_addr;
     int prot;
 
@@ -320,7 +306,7 @@ hwaddr mips_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 int mips_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
                               int mmu_idx)
 {
-    MIPSCPU *cpu = MIPS_CPU(cs);
+    MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
     CPUMIPSState *env = &cpu->env;
 #if !defined(CONFIG_USER_ONLY)
     hwaddr physical;
@@ -471,7 +457,7 @@ static inline void set_badinstr_registers(CPUMIPSState *env)
 void mips_cpu_do_interrupt(CPUState *cs)
 {
 #if !defined(CONFIG_USER_ONLY)
-    MIPSCPU *cpu = MIPS_CPU(cs);
+    MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
     CPUMIPSState *env = &cpu->env;
     bool update_badinstr = 0;
     target_ulong offset;
@@ -766,10 +752,10 @@ void mips_cpu_do_interrupt(CPUState *cs)
     cs->exception_index = EXCP_NONE;
 }
 
-bool mips_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
+bool mips_cpu_exec_interrupt(CPUState *cs, int interrupt_request)   // qq
 {
     if (interrupt_request & CPU_INTERRUPT_HARD) {
-        MIPSCPU *cpu = MIPS_CPU(cs);
+        MIPSCPU *cpu = MIPS_CPU(cs->uc, cs);
         CPUMIPSState *env = &cpu->env;
 
         if (cpu_mips_hw_interrupts_enabled(env) &&

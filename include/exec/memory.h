@@ -39,8 +39,8 @@
 #define MAX_PHYS_ADDR            (((hwaddr)1 << MAX_PHYS_ADDR_SPACE_BITS) - 1)
 
 #define TYPE_MEMORY_REGION "qemu:memory-region"
-#define MEMORY_REGION(obj) \
-        OBJECT_CHECK(MemoryRegion, (obj), TYPE_MEMORY_REGION)
+#define MEMORY_REGION(uc, obj) \
+        OBJECT_CHECK(uc, MemoryRegion, (obj), TYPE_MEMORY_REGION)
 
 typedef struct MemoryRegionOps MemoryRegionOps;
 typedef struct MemoryRegionMmio MemoryRegionMmio;
@@ -84,12 +84,12 @@ typedef uint32_t MemTxResult;
 struct MemoryRegionOps {
     /* Read from the memory region. @addr is relative to @mr; @size is
      * in bytes. */
-    uint64_t (*read)(void *opaque,
+    uint64_t (*read)(struct uc_struct* uc, void *opaque,
                      hwaddr addr,
                      unsigned size);
     /* Write to the memory region. @addr is relative to @mr; @size is
      * in bytes. */
-    void (*write)(void *opaque,
+    void (*write)(struct uc_struct* uc, void *opaque,
                   hwaddr addr,
                   uint64_t data,
                   unsigned size);
@@ -193,6 +193,9 @@ struct MemoryRegion {
     unsigned ioeventfd_nb;
     MemoryRegionIoeventfd *ioeventfds;
     NotifierList iommu_notify;
+    struct uc_struct *uc;
+    uint32_t perms;   //all perms, partially redundant with readonly
+    uint64_t end;
 };
 
 /**
@@ -245,6 +248,7 @@ struct AddressSpace {
     struct AddressSpaceDispatch *dispatch;
     struct AddressSpaceDispatch *next_dispatch;
     MemoryListener dispatch_listener;
+    struct uc_struct* uc;
 
     QTAILQ_ENTRY(AddressSpace) address_spaces_link;
 };
@@ -280,7 +284,7 @@ struct MemoryRegionSection {
  * @name: used for debugging; not visible to the user or ABI
  * @size: size of the region; any subregions beyond this size will be clipped
  */
-void memory_region_init(MemoryRegion *mr,
+void memory_region_init(struct uc_struct *uc, MemoryRegion *mr,
                         struct Object *owner,
                         const char *name,
                         uint64_t size);
@@ -328,7 +332,7 @@ void memory_region_unref(MemoryRegion *mr);
  * @name: used for debugging; not visible to the user or ABI
  * @size: size of the region.
  */
-void memory_region_init_io(MemoryRegion *mr,
+void memory_region_init_io(struct uc_struct *uc, MemoryRegion *mr,
                            struct Object *owner,
                            const MemoryRegionOps *ops,
                            void *opaque,
@@ -408,7 +412,7 @@ void memory_region_init_ram_from_file(MemoryRegion *mr,
  * @size: size of the region.
  * @ptr: memory to be mapped; must contain at least @size bytes.
  */
-void memory_region_init_ram_ptr(MemoryRegion *mr,
+void memory_region_init_ram_ptr(struct uc_struct *uc, MemoryRegion *mr,
                                 struct Object *owner,
                                 const char *name,
                                 uint64_t size,
@@ -426,7 +430,7 @@ void memory_region_init_ram_ptr(MemoryRegion *mr,
  * @offset: start of the section in @orig to be referenced.
  * @size: size of the region.
  */
-void memory_region_init_alias(MemoryRegion *mr,
+void memory_region_init_alias(struct uc_struct *uc, MemoryRegion *mr,
                               struct Object *owner,
                               const char *name,
                               MemoryRegion *orig,
@@ -496,13 +500,6 @@ void memory_region_init_iommu(MemoryRegion *mr,
                               const MemoryRegionIOMMUOps *ops,
                               const char *name,
                               uint64_t size);
-
-/**
- * memory_region_owner: get a memory region's owner.
- *
- * @mr: the memory region being queried.
- */
-struct Object *memory_region_owner(MemoryRegion *mr);
 
 /**
  * memory_region_size: get a memory region's size.
@@ -785,32 +782,6 @@ void memory_region_set_readonly(MemoryRegion *mr, bool readonly);
 void memory_region_rom_device_set_romd(MemoryRegion *mr, bool romd_mode);
 
 /**
- * memory_region_set_coalescing: Enable memory coalescing for the region.
- *
- * Enabled writes to a region to be queued for later processing. MMIO ->write
- * callbacks may be delayed until a non-coalesced MMIO is issued.
- * Only useful for IO regions.  Roughly similar to write-combining hardware.
- *
- * @mr: the memory region to be write coalesced
- */
-void memory_region_set_coalescing(MemoryRegion *mr);
-
-/**
- * memory_region_add_coalescing: Enable memory coalescing for a sub-range of
- *                               a region.
- *
- * Like memory_region_set_coalescing(), but works on a sub-range of a region.
- * Multiple calls can be issued coalesced disjoint ranges.
- *
- * @mr: the memory region to be updated.
- * @offset: the start of the range within the region to be coalesced.
- * @size: the size of the subrange to be coalesced.
- */
-void memory_region_add_coalescing(MemoryRegion *mr,
-                                  hwaddr offset,
-                                  uint64_t size);
-
-/**
  * memory_region_clear_coalescing: Disable MMIO coalescing for the region.
  *
  * Disables any coalescing caused by memory_region_set_coalescing() or
@@ -963,6 +934,7 @@ void memory_region_add_subregion_overlap(MemoryRegion *mr,
 ram_addr_t memory_region_get_ram_addr(MemoryRegion *mr);
 
 uint64_t memory_region_get_alignment(const MemoryRegion *mr);
+
 /**
  * memory_region_del_subregion: Remove a subregion.
  *
@@ -1074,26 +1046,18 @@ MemoryRegionSection memory_region_find(MemoryRegion *mr,
                                        hwaddr addr, uint64_t size);
 
 /**
- * address_space_sync_dirty_bitmap: synchronize the dirty log for all memory
- *
- * Synchronizes the dirty page log for an entire address space.
- * @as: the address space that contains the memory being synchronized
- */
-void address_space_sync_dirty_bitmap(AddressSpace *as);
-
-/**
  * memory_region_transaction_begin: Start a transaction.
  *
  * During a transaction, changes will be accumulated and made visible
  * only when the transaction ends (is committed).
  */
-void memory_region_transaction_begin(void);
+void memory_region_transaction_begin(struct uc_struct*);
 
 /**
  * memory_region_transaction_commit: Commit a transaction and make changes
  *                                   visible to the guest.
  */
-void memory_region_transaction_commit(void);
+void memory_region_transaction_commit(struct uc_struct*);
 
 /**
  * memory_listener_register: register callbacks to be called when memory
@@ -1103,26 +1067,14 @@ void memory_region_transaction_commit(void);
  * @listener: an object containing the callbacks to be called
  * @filter: if non-%NULL, only regions in this address space will be observed
  */
-void memory_listener_register(MemoryListener *listener, AddressSpace *filter);
+void memory_listener_register(struct uc_struct* uc, MemoryListener *listener, AddressSpace *filter);
 
 /**
  * memory_listener_unregister: undo the effect of memory_listener_register()
  *
  * @listener: an object containing the callbacks to be removed
  */
-void memory_listener_unregister(MemoryListener *listener);
-
-/**
- * memory_global_dirty_log_start: begin dirty logging for all regions
- */
-void memory_global_dirty_log_start(void);
-
-/**
- * memory_global_dirty_log_stop: end dirty logging for all regions
- */
-void memory_global_dirty_log_stop(void);
-
-void mtree_info(fprintf_function mon_printf, void *f);
+void memory_listener_unregister(struct uc_struct* uc, MemoryListener *listener);
 
 /**
  * memory_region_dispatch_read: perform a read directly to the specified
@@ -1163,7 +1115,7 @@ MemTxResult memory_region_dispatch_write(MemoryRegion *mr,
  * @name: an address space name.  The name is only used for debugging
  *        output.
  */
-void address_space_init(AddressSpace *as, MemoryRegion *root, const char *name);
+void address_space_init(struct uc_struct *uc, AddressSpace *as, MemoryRegion *root, const char *name);
 
 
 /**
@@ -1355,6 +1307,13 @@ void *address_space_map(AddressSpace *as, hwaddr addr,
 void address_space_unmap(AddressSpace *as, void *buffer, hwaddr len,
                          int is_write, hwaddr access_len);
 
+
+void memory_register_types(struct uc_struct *uc);
+
+MemoryRegion *memory_map(struct uc_struct *uc, ram_addr_t begin, size_t size, uint32_t perms);
+MemoryRegion *memory_map_ptr(struct uc_struct *uc, ram_addr_t begin, size_t size, uint32_t perms, void *ptr);
+void memory_unmap(struct uc_struct *uc, MemoryRegion *mr);
+int memory_free(struct uc_struct *uc);
 
 #endif
 

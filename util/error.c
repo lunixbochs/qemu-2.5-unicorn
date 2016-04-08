@@ -14,7 +14,6 @@
 
 #include "qemu-common.h"
 #include "qapi/error.h"
-#include "qemu/error-report.h"
 
 struct Error
 {

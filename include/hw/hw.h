@@ -10,8 +10,6 @@
 
 #include "exec/ioport.h"
 #include "hw/irq.h"
-#include "block/aio.h"
-#include "migration/vmstate.h"
 #include "qemu/log.h"
 
 #ifdef NEED_CPU_H

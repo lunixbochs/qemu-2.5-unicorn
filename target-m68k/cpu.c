@@ -18,14 +18,14 @@
  * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
+#include "hw/m68k/m68k.h"
 #include "cpu.h"
 #include "qemu-common.h"
-#include "migration/vmstate.h"
 
 
 static void m68k_cpu_set_pc(CPUState *cs, vaddr value)
 {
-    M68kCPU *cpu = M68K_CPU(cs);
+    M68kCPU *cpu = M68K_CPU(cs->uc, cs);
 
     cpu->env.pc = value;
 }
@@ -43,8 +43,8 @@ static void m68k_set_feature(CPUM68KState *env, int feature)
 /* CPUClass::reset() */
 static void m68k_cpu_reset(CPUState *s)
 {
-    M68kCPU *cpu = M68K_CPU(s);
-    M68kCPUClass *mcc = M68K_CPU_GET_CLASS(cpu);
+    M68kCPU *cpu = M68K_CPU(s->uc, s);
+    M68kCPUClass *mcc = M68K_CPU_GET_CLASS(s->uc, cpu);
     CPUM68KState *env = &cpu->env;
 
     mcc->parent_reset(s);
@@ -68,7 +68,7 @@ static void m68k_cpu_disas_set_info(CPUState *cpu, disassemble_info *info)
 
 /* CPU models */
 
-static ObjectClass *m68k_cpu_class_by_name(const char *cpu_model)
+static ObjectClass *m68k_cpu_class_by_name(struct uc_struct *uc, const char *cpu_model)
 {
     ObjectClass *oc;
     char *typename;
@@ -78,26 +78,26 @@ static ObjectClass *m68k_cpu_class_by_name(const char *cpu_model)
     }
 
     typename = g_strdup_printf("%s-" TYPE_M68K_CPU, cpu_model);
-    oc = object_class_by_name(typename);
+    oc = object_class_by_name(uc, typename);
     g_free(typename);
-    if (oc != NULL && (object_class_dynamic_cast(oc, TYPE_M68K_CPU) == NULL ||
+    if (oc != NULL && (object_class_dynamic_cast(uc, oc, TYPE_M68K_CPU) == NULL ||
                        object_class_is_abstract(oc))) {
         return NULL;
     }
     return oc;
 }
 
-static void m5206_cpu_initfn(Object *obj)
+static void m5206_cpu_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    M68kCPU *cpu = M68K_CPU(obj);
+    M68kCPU *cpu = M68K_CPU(uc, obj);
     CPUM68KState *env = &cpu->env;
 
     m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
 }
 
-static void m5208_cpu_initfn(Object *obj)
+static void m5208_cpu_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    M68kCPU *cpu = M68K_CPU(obj);
+    M68kCPU *cpu = M68K_CPU(uc, obj);
     CPUM68KState *env = &cpu->env;
 
     m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
@@ -107,9 +107,9 @@ static void m5208_cpu_initfn(Object *obj)
     m68k_set_feature(env, M68K_FEATURE_USP);
 }
 
-static void cfv4e_cpu_initfn(Object *obj)
+static void cfv4e_cpu_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    M68kCPU *cpu = M68K_CPU(obj);
+    M68kCPU *cpu = M68K_CPU(uc, obj);
     CPUM68KState *env = &cpu->env;
 
     m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
@@ -120,9 +120,9 @@ static void cfv4e_cpu_initfn(Object *obj)
     m68k_set_feature(env, M68K_FEATURE_USP);
 }
 
-static void any_cpu_initfn(Object *obj)
+static void any_cpu_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    M68kCPU *cpu = M68K_CPU(obj);
+    M68kCPU *cpu = M68K_CPU(uc, obj);
     CPUM68KState *env = &cpu->env;
 
     m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
@@ -141,7 +141,7 @@ static void any_cpu_initfn(Object *obj)
 
 typedef struct M68kCPUInfo {
     const char *name;
-    void (*instance_init)(Object *obj);
+    void (*instance_init)(struct uc_struct *uc, Object *obj, void *opaque);
 } M68kCPUInfo;
 
 static const M68kCPUInfo m68k_cpus[] = {
@@ -202,10 +202,7 @@ static void m68k_cpu_class_init(ObjectClass *c, void *data)
     cc->has_work = m68k_cpu_has_work;
     cc->do_interrupt = m68k_cpu_do_interrupt;
     cc->cpu_exec_interrupt = m68k_cpu_exec_interrupt;
-    cc->dump_state = m68k_cpu_dump_state;
     cc->set_pc = m68k_cpu_set_pc;
-    cc->gdb_read_register = m68k_cpu_gdb_read_register;
-    cc->gdb_write_register = m68k_cpu_gdb_write_register;
 #ifdef CONFIG_USER_ONLY
     cc->handle_mmu_fault = m68k_cpu_handle_mmu_fault;
 #else
@@ -236,28 +233,27 @@ static void register_cpu_type(const M68kCPUInfo *info)
     };
 
     type_info.name = g_strdup_printf("%s-" TYPE_M68K_CPU, info->name);
-    type_register(&type_info);
+    type_register(opaque, &type_info);
     g_free((void *)type_info.name);
 }
 
-static const TypeInfo m68k_cpu_type_info = {
+void m68k_cpu_register_types(void *opaque)
+{
+    TypeInfo m68k_cpu_type_info = {
     .name = TYPE_M68K_CPU,
     .parent = TYPE_CPU,
+        .instance_userdata = opaque,
     .instance_size = sizeof(M68kCPU),
     .instance_init = m68k_cpu_initfn,
     .abstract = true,
     .class_size = sizeof(M68kCPUClass),
     .class_init = m68k_cpu_class_init,
-};
+    };
 
-static void m68k_cpu_register_types(void)
-{
     int i;
 
-    type_register_static(&m68k_cpu_type_info);
+    type_register_static(opaque, &m68k_cpu_type_info);
     for (i = 0; i < ARRAY_SIZE(m68k_cpus); i++) {
-        register_cpu_type(&m68k_cpus[i]);
+        register_cpu_type(opaque, &m68k_cpus[i]);
     }
 }
-
-type_init(m68k_cpu_register_types)

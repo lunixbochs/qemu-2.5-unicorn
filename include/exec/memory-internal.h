@@ -31,5 +31,7 @@ extern const MemoryRegionOps unassigned_mem_ops;
 bool memory_region_access_valid(MemoryRegion *mr, hwaddr addr,
                                 unsigned size, bool is_write);
 
+void address_space_unregister(AddressSpace *as);
+
 #endif
 #endif

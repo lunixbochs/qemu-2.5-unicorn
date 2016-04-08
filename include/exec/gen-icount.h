@@ -75,5 +75,6 @@ static inline void gen_io_end(void)
     tcg_gen_st_i32(tmp, cpu_env, -ENV_OFFSET + offsetof(CPUState, can_do_io));
     tcg_temp_free_i32(tmp);
 }
+#endif
 
 #endif

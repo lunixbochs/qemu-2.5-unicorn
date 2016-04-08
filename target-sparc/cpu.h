@@ -502,18 +502,21 @@ struct CPUSPARCState {
 #endif
     sparc_def_t *def;
 
-    void *irq_manager;
-    void (*qemu_irq_ack)(CPUSPARCState *env, void *irq_manager, int intno);
+    //void *irq_manager;
+    //void (*qemu_irq_ack)(CPUSPARCState *env, void *irq_manager, int intno);
 
     /* Leon3 cache control */
     uint32_t cache_control;
+
+    // Unicorn engine
+    struct uc_struct *uc;
 };
 
 #include "cpu-qom.h"
 
 #ifndef NO_CPU_IO_DEFS
 /* cpu_init.c */
-SPARCCPU *cpu_sparc_init(const char *cpu_model);
+SPARCCPU *cpu_sparc_init(struct uc_struct *uc, const char *cpu_model);
 void cpu_sparc_set_id(CPUSPARCState *env, unsigned int cpu);
 void sparc_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 /* mmu_helper.c */

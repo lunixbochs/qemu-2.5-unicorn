@@ -76,7 +76,7 @@ static const ElfW_auxv_t *qemu_init_auxval(void)
             auxv = a = g_realloc(a, size);
             r = read(fd, (char *)a + ofs, ofs);
         } while (r == ofs);
-    }
+}
 
     close(fd);
     return a;

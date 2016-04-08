@@ -2582,9 +2582,9 @@ static void tcg_target_init(TCGContext *s)
         have_isa_2_06 = true;
     }
 
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffffffff);
-    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffffffff);
-    tcg_regset_set32(tcg_target_call_clobber_regs, 0,
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffffffff);
+    tcg_regset_set32(s->tcg_target_available_regs[TCG_TYPE_I64], 0, 0xffffffff);
+    tcg_regset_set32(s->tcg_target_call_clobber_regs, 0,
                      (1 << TCG_REG_R0) |
                      (1 << TCG_REG_R2) |
                      (1 << TCG_REG_R3) |
@@ -2612,63 +2612,15 @@ static void tcg_target_init(TCGContext *s)
         tcg_regset_set_reg(s->reserved_regs, TCG_REG_RA);  /* return addr */
     }
 
-    tcg_add_target_add_op_defs(ppc_op_defs);
+    tcg_add_target_add_op_defs(s, ppc_op_defs);
 }
 
 #ifdef __ELF__
-typedef struct {
-    DebugFrameCIE cie;
-    DebugFrameFDEHeader fde;
-    uint8_t fde_def_cfa[4];
-    uint8_t fde_reg_ofs[ARRAY_SIZE(tcg_target_callee_save_regs) * 2 + 3];
-} DebugFrame;
-
-/* We're expecting a 2 byte uleb128 encoded value.  */
-QEMU_BUILD_BUG_ON(FRAME_SIZE >= (1 << 14));
-
 #if TCG_TARGET_REG_BITS == 64
 # define ELF_HOST_MACHINE EM_PPC64
 #else
 # define ELF_HOST_MACHINE EM_PPC
 #endif
-
-static DebugFrame debug_frame = {
-    .cie.len = sizeof(DebugFrameCIE)-4, /* length after .len member */
-    .cie.id = -1,
-    .cie.version = 1,
-    .cie.code_align = 1,
-    .cie.data_align = (-SZR & 0x7f),         /* sleb128 -SZR */
-    .cie.return_column = 65,
-
-    /* Total FDE size does not include the "len" member.  */
-    .fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, fde.cie_offset),
-
-    .fde_def_cfa = {
-        12, TCG_REG_R1,                 /* DW_CFA_def_cfa r1, ... */
-        (FRAME_SIZE & 0x7f) | 0x80,     /* ... uleb128 FRAME_SIZE */
-        (FRAME_SIZE >> 7)
-    },
-    .fde_reg_ofs = {
-        /* DW_CFA_offset_extended_sf, lr, LR_OFFSET */
-        0x11, 65, (LR_OFFSET / -SZR) & 0x7f,
-    }
-};
-
-void tcg_register_jit(void *buf, size_t buf_size)
-{
-    uint8_t *p = &debug_frame.fde_reg_ofs[3];
-    int i;
-
-    for (i = 0; i < ARRAY_SIZE(tcg_target_callee_save_regs); ++i, p += 2) {
-        p[0] = 0x80 + tcg_target_callee_save_regs[i];
-        p[1] = (FRAME_SIZE - (REG_SAVE_BOT + i * SZR)) / SZR;
-    }
-
-    debug_frame.fde.func_start = (uintptr_t)buf;
-    debug_frame.fde.func_len = buf_size;
-
-    tcg_register_jit_int(buf, buf_size, &debug_frame, sizeof(debug_frame));
-}
 #endif /* __ELF__ */
 
 static size_t dcache_bsize = 16;

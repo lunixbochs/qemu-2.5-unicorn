@@ -133,7 +133,7 @@ static void do_interrupt_all(CPUM68KState *env, int is_hw)
 
 void m68k_cpu_do_interrupt(CPUState *cs)
 {
-    M68kCPU *cpu = M68K_CPU(cs);
+    M68kCPU *cpu = M68K_CPU(cs->uc, cs);
     CPUM68KState *env = &cpu->env;
 
     do_interrupt_all(env, 0);
@@ -147,7 +147,7 @@ static inline void do_interrupt_m68k_hardirq(CPUM68KState *env)
 
 bool m68k_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
-    M68kCPU *cpu = M68K_CPU(cs);
+    M68kCPU *cpu = M68K_CPU(cs->uc, cs);
     CPUM68KState *env = &cpu->env;
 
     if (interrupt_request & CPU_INTERRUPT_HARD
