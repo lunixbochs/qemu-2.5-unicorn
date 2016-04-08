@@ -21,25 +21,20 @@
 #include "cpu.h"
 #include "internals.h"
 #include "qemu-common.h"
-#include "hw/qdev-properties.h"
-#if !defined(CONFIG_USER_ONLY)
-#include "hw/loader.h"
-#endif
 #include "hw/arm/arm.h"
 #include "sysemu/sysemu.h"
-#include "sysemu/kvm.h"
 #include "kvm_arm.h"
 
 static void arm_cpu_set_pc(CPUState *cs, vaddr value)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
+    ARMCPU *cpu = ARM_CPU(cs->env_ptr->uc, cs);
 
     cpu->env.regs[15] = value;
 }
 
 static bool arm_cpu_has_work(CPUState *cs)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
+    ARMCPU *cpu = ARM_CPU(cs->env_ptr->uc, cs);
 
     return !cpu->powered_off
         && cs->interrupt_request &
@@ -199,6 +194,9 @@ static void arm_cpu_reset(CPUState *s)
         env->thumb = initial_pc & 1;
     }
 
+    // Unicorn: force Thumb mode by setting of uc_open()
+    env->thumb = env->uc->thumb;
+
     /* AArch32 has a hard highvec setting of 0xFFFF0000.  If we are currently
      * executing as AArch32 then check if highvecs are enabled and
      * adjust the PC accordingly.
@@ -218,20 +216,14 @@ static void arm_cpu_reset(CPUState *s)
                               &env->vfp.standard_fp_status);
     tlb_flush(s, 1);
 
-#ifndef CONFIG_USER_ONLY
-    if (kvm_enabled()) {
-        kvm_arm_reset_vcpu(cpu);
-    }
-#endif
-
     hw_breakpoint_update_all(cpu);
     hw_watchpoint_update_all(cpu);
 }
 
 bool arm_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
-    CPUClass *cc = CPU_GET_CLASS(cs);
     CPUARMState *env = cs->env_ptr;
+    CPUClass *cc = CPU_GET_CLASS(env->uc, cs);
     uint32_t cur_el = arm_current_el(env);
     bool secure = arm_is_secure(env);
     uint32_t target_el;
@@ -317,83 +309,6 @@ static bool arm_v7m_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 }
 #endif
 
-#ifndef CONFIG_USER_ONLY
-static void arm_cpu_set_irq(void *opaque, int irq, int level)
-{
-    ARMCPU *cpu = opaque;
-    CPUARMState *env = &cpu->env;
-    CPUState *cs = CPU(cpu);
-    static const int mask[] = {
-        [ARM_CPU_IRQ] = CPU_INTERRUPT_HARD,
-        [ARM_CPU_FIQ] = CPU_INTERRUPT_FIQ,
-        [ARM_CPU_VIRQ] = CPU_INTERRUPT_VIRQ,
-        [ARM_CPU_VFIQ] = CPU_INTERRUPT_VFIQ
-    };
-
-    switch (irq) {
-    case ARM_CPU_VIRQ:
-    case ARM_CPU_VFIQ:
-        assert(arm_feature(env, ARM_FEATURE_EL2));
-        /* fall through */
-    case ARM_CPU_IRQ:
-    case ARM_CPU_FIQ:
-        if (level) {
-            cpu_interrupt(cs, mask[irq]);
-        } else {
-            cpu_reset_interrupt(cs, mask[irq]);
-        }
-        break;
-    default:
-        g_assert_not_reached();
-    }
-}
-
-static void arm_cpu_kvm_set_irq(void *opaque, int irq, int level)
-{
-#ifdef CONFIG_KVM
-    ARMCPU *cpu = opaque;
-    CPUState *cs = CPU(cpu);
-    int kvm_irq = KVM_ARM_IRQ_TYPE_CPU << KVM_ARM_IRQ_TYPE_SHIFT;
-
-    switch (irq) {
-    case ARM_CPU_IRQ:
-        kvm_irq |= KVM_ARM_IRQ_CPU_IRQ;
-        break;
-    case ARM_CPU_FIQ:
-        kvm_irq |= KVM_ARM_IRQ_CPU_FIQ;
-        break;
-    default:
-        g_assert_not_reached();
-    }
-    kvm_irq |= cs->cpu_index << KVM_ARM_IRQ_VCPU_SHIFT;
-    kvm_set_irq(kvm_state, kvm_irq, level ? 1 : 0);
-#endif
-}
-
-static bool arm_cpu_is_big_endian(CPUState *cs)
-{
-    ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
-    int cur_el;
-
-    cpu_synchronize_state(cs);
-
-    /* In 32bit guest endianness is determined by looking at CPSR's E bit */
-    if (!is_a64(env)) {
-        return (env->uncached_cpsr & CPSR_E) ? 1 : 0;
-    }
-
-    cur_el = arm_current_el(env);
-
-    if (cur_el == 0) {
-        return (env->cp15.sctlr_el[1] & SCTLR_E0E) != 0;
-    }
-
-    return (env->cp15.sctlr_el[cur_el] & SCTLR_EE) != 0;
-}
-
-#endif
-
 static inline void set_feature(CPUARMState *env, int feature)
 {
     env->features |= 1ULL << feature;
@@ -439,15 +354,15 @@ static void arm_disas_set_info(CPUState *cpu, disassemble_info *info)
 
 #define ARM_CPUS_PER_CLUSTER 8
 
-static void arm_cpu_initfn(Object *obj)
+static void arm_cpu_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
     CPUState *cs = CPU(obj);
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
     static bool inited;
     uint32_t Aff1, Aff0;
 
     cs->env_ptr = &cpu->env;
-    cpu_exec_init(cs, &error_abort);
+    cpu_exec_init(&cpu->env, opaque);
     cpu->cp_regs = g_hash_table_new_full(g_int_hash, g_int_equal,
                                          g_free, g_free);
 
@@ -460,29 +375,6 @@ static void arm_cpu_initfn(Object *obj)
     Aff0 = cs->cpu_index % ARM_CPUS_PER_CLUSTER;
     cpu->mp_affinity = (Aff1 << ARM_AFF1_SHIFT) | Aff0;
 
-#ifndef CONFIG_USER_ONLY
-    /* Our inbound IRQ and FIQ lines */
-    if (kvm_enabled()) {
-        /* VIRQ and VFIQ are unused with KVM but we add them to maintain
-         * the same interface as non-KVM CPUs.
-         */
-        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_kvm_set_irq, 4);
-    } else {
-        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_set_irq, 4);
-    }
-
-    cpu->gt_timer[GTIMER_PHYS] = timer_new(QEMU_CLOCK_VIRTUAL, GTIMER_SCALE,
-                                                arm_gt_ptimer_cb, cpu);
-    cpu->gt_timer[GTIMER_VIRT] = timer_new(QEMU_CLOCK_VIRTUAL, GTIMER_SCALE,
-                                                arm_gt_vtimer_cb, cpu);
-    cpu->gt_timer[GTIMER_HYP] = timer_new(QEMU_CLOCK_VIRTUAL, GTIMER_SCALE,
-                                                arm_gt_htimer_cb, cpu);
-    cpu->gt_timer[GTIMER_SEC] = timer_new(QEMU_CLOCK_VIRTUAL, GTIMER_SCALE,
-                                                arm_gt_stimer_cb, cpu);
-    qdev_init_gpio_out(DEVICE(cpu), cpu->gt_timer_outputs,
-                       ARRAY_SIZE(cpu->gt_timer_outputs));
-#endif
-
     /* DTB consumers generally don't in fact care what the 'compatible'
      * string is, so always provide some string and trust that a hypothetical
      * picky DTB consumer will also provide a helpful error message.
@@ -491,37 +383,18 @@ static void arm_cpu_initfn(Object *obj)
     cpu->psci_version = 1; /* By default assume PSCI v0.1 */
     cpu->kvm_target = QEMU_KVM_ARM_TARGET_NONE;
 
-    if (tcg_enabled()) {
-        cpu->psci_version = 2; /* TCG implements PSCI 0.2 */
-        if (!inited) {
-            inited = true;
-            arm_translate_init();
-        }
+    cpu->psci_version = 2; /* TCG implements PSCI 0.2 */
+    if (!inited) {
+        inited = true;
+        arm_translate_init(uc);
     }
 }
 
-static Property arm_cpu_reset_cbar_property =
-            DEFINE_PROP_UINT64("reset-cbar", ARMCPU, reset_cbar, 0);
-
-static Property arm_cpu_reset_hivecs_property =
-            DEFINE_PROP_BOOL("reset-hivecs", ARMCPU, reset_hivecs, false);
-
-static Property arm_cpu_rvbar_property =
-            DEFINE_PROP_UINT64("rvbar", ARMCPU, rvbar, 0);
-
-static Property arm_cpu_has_el3_property =
-            DEFINE_PROP_BOOL("has_el3", ARMCPU, has_el3, true);
-
-static Property arm_cpu_has_mpu_property =
-            DEFINE_PROP_BOOL("has-mpu", ARMCPU, has_mpu, true);
-
-static Property arm_cpu_pmsav7_dregion_property =
-            DEFINE_PROP_UINT32("pmsav7-dregion", ARMCPU, pmsav7_dregion, 16);
-
-static void arm_cpu_post_init(Object *obj)
+static void arm_cpu_post_init(struct uc_struct *uc, Object *obj)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
 
+#if 0
     if (arm_feature(&cpu->env, ARM_FEATURE_CBAR) ||
         arm_feature(&cpu->env, ARM_FEATURE_CBAR_RO)) {
         qdev_property_add_static(DEVICE(obj), &arm_cpu_reset_cbar_property,
@@ -555,20 +428,21 @@ static void arm_cpu_post_init(Object *obj)
                                      &error_abort);
         }
     }
+#endif
 
 }
 
-static void arm_cpu_finalizefn(Object *obj)
+static void arm_cpu_finalizefn(struct uc *uc, Object *obj, void *opaque)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
     g_hash_table_destroy(cpu->cp_regs);
 }
 
-static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
+static void arm_cpu_realizefn(DeviceState *dev, DeviceState *dev, Error **errp)
 {
     CPUState *cs = CPU(dev);
-    ARMCPU *cpu = ARM_CPU(dev);
-    ARMCPUClass *acc = ARM_CPU_GET_CLASS(dev);
+    ARMCPU *cpu = ARM_CPU(uc, dev);
+    ARMCPUClass *acc = ARM_CPU_GET_CLASS(uc, dev);
     CPUARMState *env = &cpu->env;
 
     /* Some features automatically imply others: */
@@ -687,10 +561,10 @@ static ObjectClass *arm_cpu_class_by_name(struct uc_struct *uc, const char *cpu_
 
     cpuname = g_strsplit(cpu_model, ",", 1);
     typename = g_strdup_printf("%s-" TYPE_ARM_CPU, cpuname[0]);
-    oc = object_class_by_name(typename);
+    oc = object_class_by_name(uc, typename);
     g_strfreev(cpuname);
     g_free(typename);
-    if (!oc || !object_class_dynamic_cast(oc, TYPE_ARM_CPU) ||
+    if (!oc || !object_class_dynamic_cast(uc, oc, TYPE_ARM_CPU) ||
         object_class_is_abstract(oc)) {
         return NULL;
     }
@@ -888,26 +762,26 @@ static void arm11mpcore_initfn(struct uc_struct *uc, Object *obj, void *opaque)
     cpu->reset_auxcr = 1;
 }
 
-static void cortex_m3_initfn(Object *obj)
+static void cortex_m3_initfn(struct *uc, Object *obj, void *opaque)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
     set_feature(&cpu->env, ARM_FEATURE_V7);
     set_feature(&cpu->env, ARM_FEATURE_M);
     cpu->midr = 0x410fc231;
 }
 
-static void cortex_m4_initfn(Object *obj)
+static void cortex_m4_initfn(struct *uc, Object *obj, void *opaque)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
 
     set_feature(&cpu->env, ARM_FEATURE_V7);
     set_feature(&cpu->env, ARM_FEATURE_M);
     set_feature(&cpu->env, ARM_FEATURE_THUMB_DSP);
     cpu->midr = 0x410fc240; /* r0p0 */
 }
-static void arm_v7m_class_init(ObjectClass *oc, void *data)
+static void arm_v7m_class_init(struct *uc, ObjectClass *oc, void *data)
 {
-    CPUClass *cc = CPU_CLASS(oc);
+    CPUClass *cc = CPU_CLASS(uc, oc);
 
 #ifndef CONFIG_USER_ONLY
     cc->do_interrupt = arm_v7m_cpu_do_interrupt;
@@ -916,7 +790,7 @@ static void arm_v7m_class_init(ObjectClass *oc, void *data)
     cc->cpu_exec_interrupt = arm_v7m_cpu_exec_interrupt;
 }
 
-static const ARMCPRegInfo cortexr5_cp_reginfo[] = {
+static const ARMCPRegInfo cortexr5_cp_reginf[] = {
     /* Dummy the TCM region regs for the moment */
     { .name = "ATCM", .cp = 15, .opc1 = 0, .crn = 9, .crm = 1, .opc2 = 0,
       .access = PL1_RW, .type = ARM_CP_CONST },
@@ -925,9 +799,9 @@ static const ARMCPRegInfo cortexr5_cp_reginfo[] = {
     REGINFO_SENTINEL
 };
 
-static void cortex_r5_initfn(Object *obj)
+static void cortex_r5_initfn(struct uc_struct *uc, Object *obj, void *opaque)
 {
-    ARMCPU *cpu = ARM_CPU(obj);
+    ARMCPU *cpu = ARM_CPU(uc, obj);
 
     set_feature(&cpu->env, ARM_FEATURE_V7);
     set_feature(&cpu->env, ARM_FEATURE_THUMB_DIV);
@@ -1373,39 +1247,14 @@ static const ARMCPUInfo arm_cpus[] = {
     { .name = NULL }
 };
 
-static Property arm_cpu_properties[] = {
-    DEFINE_PROP_BOOL("start-powered-off", ARMCPU, start_powered_off, false),
-    DEFINE_PROP_UINT32("psci-conduit", ARMCPU, psci_conduit, 0),
-    DEFINE_PROP_UINT32("midr", ARMCPU, midr, 0),
-    DEFINE_PROP_END_OF_LIST()
-};
-
-#ifdef CONFIG_USER_ONLY
-static int arm_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int rw,
-                                    int mmu_idx)
+static void arm_cpu_class_init(struct uc_struct *uc, ObjectClass *oc, void *data)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
-
-    env->exception.vaddress = address;
-    if (rw == 2) {
-        cs->exception_index = EXCP_PREFETCH_ABORT;
-    } else {
-        cs->exception_index = EXCP_DATA_ABORT;
-    }
-    return 1;
-}
-#endif
-
-static void arm_cpu_class_init(ObjectClass *oc, void *data)
-{
-    ARMCPUClass *acc = ARM_CPU_CLASS(oc);
-    CPUClass *cc = CPU_CLASS(acc);
-    DeviceClass *dc = DEVICE_CLASS(oc);
+    ARMCPUClass *acc = ARM_CPU_CLASS(uc, oc);
+    CPUClass *cc = CPU_CLASS(uc, acc);
+    DeviceClass *dc = DEVICE_CLASS(uc, oc);
 
     acc->parent_realize = dc->realize;
     dc->realize = arm_cpu_realizefn;
-    dc->props = arm_cpu_properties;
 
     acc->parent_reset = cc->reset;
     cc->reset = arm_cpu_reset;
@@ -1413,21 +1262,10 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
     cc->class_by_name = arm_cpu_class_by_name;
     cc->has_work = arm_cpu_has_work;
     cc->cpu_exec_interrupt = arm_cpu_exec_interrupt;
-    cc->dump_state = arm_cpu_dump_state;
     cc->set_pc = arm_cpu_set_pc;
-    cc->gdb_read_register = arm_cpu_gdb_read_register;
-    cc->gdb_write_register = arm_cpu_gdb_write_register;
-#ifdef CONFIG_USER_ONLY
-    cc->handle_mmu_fault = arm_cpu_handle_mmu_fault;
-#else
     cc->do_interrupt = arm_cpu_do_interrupt;
     cc->get_phys_page_debug = arm_cpu_get_phys_page_debug;
-    cc->vmsd = &vmstate_arm_cpu;
     cc->virtio_is_big_endian = arm_cpu_is_big_endian;
-#endif
-    cc->gdb_num_core_regs = 26;
-    cc->gdb_core_xml_file = "arm-core.xml";
-    cc->gdb_stop_before_watchpoint = true;
     cc->debug_excp_handler = arm_debug_excp_handler;
 
     cc->disas_set_info = arm_disas_set_info;
@@ -1444,7 +1282,7 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
     dc->cannot_destroy_with_object_finalize_yet = true;
 }
 
-static void cpu_register(const ARMCPUInfo *info)
+static void cpu_register(struct uc_struct *uc, onst ARMCPUInfo *info)
 {
     TypeInfo type_info = {
         .parent = TYPE_ARM_CPU,
