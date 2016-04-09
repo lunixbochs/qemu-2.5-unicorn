@@ -136,12 +136,12 @@ void arm_handle_psci_call(ARMCPU *cpu)
 
         switch (param[2]) {
         case 0:
-            target_cpu_state = get_cpu_by_id(mpidr);
+            target_cpu_state = get_cpu_by_id(env->uc, mpidr);
             if (!target_cpu_state) {
                 ret = QEMU_PSCI_RET_INVALID_PARAMS;
                 break;
             }
-            target_cpu = ARM_CPU(target_cpu_state);
+            target_cpu = ARM_CPU(env->uc, target_cpu_state);
             ret = target_cpu->powered_off ? 1 : 0;
             break;
         default:
@@ -168,17 +168,17 @@ void arm_handle_psci_call(ARMCPU *cpu)
         context_id = param[3];
 
         /* change to the cpu we are powering up */
-        target_cpu_state = get_cpu_by_id(mpidr);
+        target_cpu_state = get_cpu_by_id(env->uc, mpidr);
         if (!target_cpu_state) {
             ret = QEMU_PSCI_RET_INVALID_PARAMS;
             break;
         }
-        target_cpu = ARM_CPU(target_cpu_state);
+        target_cpu = ARM_CPU(env->uc, target_cpu_state);
         if (!target_cpu->powered_off) {
             ret = QEMU_PSCI_RET_ALREADY_ON;
             break;
         }
-        target_cpu_class = CPU_GET_CLASS(target_cpu);
+        target_cpu_class = CPU_GET_CLASS(env->uc, target_cpu);
 
         /* Initialize the cpu we are turning on */
         cpu_reset(target_cpu_state);

@@ -254,7 +254,7 @@ static void aarch64_cpu_set_aarch64(Object *obj, bool value, Error **errp)
     }
 }
 
-static void aarch64_cpu_initfn(Object *obj)
+static void aarch64_cpu_initfn(struct uc_struct *uc, Object *obj)
 {
     object_property_add_bool(obj, "aarch64", aarch64_cpu_get_aarch64,
                              aarch64_cpu_set_aarch64, NULL);
@@ -264,13 +264,14 @@ static void aarch64_cpu_initfn(Object *obj)
                                     NULL);
 }
 
-static void aarch64_cpu_finalizefn(Object *obj)
+static void aarch64_cpu_finalizefn(struct uc_struct *uc, Object *obj)
 {
 }
 
 static void aarch64_cpu_set_pc(CPUState *cs, vaddr value)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
+    CPUARMState *env = cs->env_ptr;
+    ARMCPU *cpu = ARM_CPU(env->uc, cs);
     /* It's OK to look at env for the current mode here, because it's
      * never possible for an AArch64 TB to chain to an AArch32 TB.
      * (Otherwise we would need to use synchronize_from_tb instead.)

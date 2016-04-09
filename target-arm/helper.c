@@ -1231,21 +1231,15 @@ static void gt_recalc_timer(ARMCPU *cpu, int timeridx)
         if (nexttick > INT64_MAX / GTIMER_SCALE) {
             nexttick = INT64_MAX / GTIMER_SCALE;
         }
-        timer_mod(cpu->gt_timer[timeridx], nexttick);
     } else {
         /* Timer disabled: ISTATUS and timer output always clear */
         gt->ctl &= ~4;
-        qemu_set_irq(cpu->gt_timer_outputs[timeridx], 0);
-        timer_del(cpu->gt_timer[timeridx]);
     }
 }
 
 static void gt_timer_reset(CPUARMState *env, const ARMCPRegInfo *ri,
                            int timeridx)
 {
-    ARMCPU *cpu = arm_env_get_cpu(env);
-
-    timer_del(cpu->gt_timer[timeridx]);
 }
 
 static uint64_t gt_cnt_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -7320,8 +7314,8 @@ bool arm_tlb_fill(CPUState *cs, vaddr address,
 
 hwaddr arm_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
-    ARMCPU *cpu = ARM_CPU(cs);
-    CPUARMState *env = &cpu->env;
+    CPUARMState *env = cs->env_ptr;
+    ARMCPU *cpu = ARM_CPU(env->uc, cs);
     hwaddr phys_addr;
     target_ulong page_size;
     int prot;

@@ -61,6 +61,9 @@ typedef struct DisasContext {
 #define TMP_A64_MAX 16
     int tmp_a64_count;
     TCGv_i64 tmp_a64[TMP_A64_MAX];
+
+    // Unicorn engine
+    struct uc_struct *uc;
 } DisasContext;
 
 typedef struct DisasCompare {
@@ -121,11 +124,9 @@ static inline int default_exception_el(DisasContext *s)
 #define DISAS_YIELD 10
 
 #ifdef TARGET_AARCH64
-void a64_translate_init(void);
+void a64_translate_init(struct uc_struct *uc);
 void gen_intermediate_code_a64(ARMCPU *cpu, TranslationBlock *tb);
-void gen_a64_set_pc_im(uint64_t val);
-void aarch64_cpu_dump_state(CPUState *cs, FILE *f,
-                            fprintf_function cpu_fprintf, int flags);
+void gen_a64_set_pc_im(DisasContext *s, uint64_t val);
 #else
 static inline void a64_translate_init(void)
 {
@@ -138,17 +139,11 @@ static inline void gen_intermediate_code_a64(ARMCPU *cpu, TranslationBlock *tb)
 static inline void gen_a64_set_pc_im(uint64_t val)
 {
 }
-
-static inline void aarch64_cpu_dump_state(CPUState *cs, FILE *f,
-                                          fprintf_function cpu_fprintf,
-                                          int flags)
-{
-}
 #endif
 
-void arm_test_cc(DisasCompare *cmp, int cc);
-void arm_free_cc(DisasCompare *cmp);
-void arm_jump_cc(DisasCompare *cmp, TCGLabel *label);
-void arm_gen_test_cc(int cc, TCGLabel *label);
+void arm_test_cc(TCGContext *tcg_ctx, DisasCompare *cmp, int cc);
+void arm_free_cc(TCGContext *tcg_ctx, DisasCompare *cmp);
+void arm_jump_cc(TCGContext *tcg_ctx, DisasCompare *cmp, TCGLabel *label);
+void arm_gen_test_cc(TCGContext *tcg_ctx, int cc, TCGLabel *label);
 
 #endif /* TARGET_ARM_TRANSLATE_H */
