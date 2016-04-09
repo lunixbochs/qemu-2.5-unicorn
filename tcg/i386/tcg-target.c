@@ -1072,7 +1072,7 @@ static void tcg_out_movcond32(TCGContext *s, TCGCond cond, TCGArg dest,
     if (have_cmov) {
         tcg_out_modrm(s, OPC_CMOVCC | tcg_cond_to_jcc[cond], dest, v1);
     } else {
-        TCGLabel *over = gen_new_label();
+        TCGLabel *over = gen_new_label(s);
         tcg_out_jxx(s, tcg_cond_to_jcc[tcg_invert_cond(cond)], over, 1);
         tcg_out_mov(s, TCG_TYPE_I32, dest, v1);
         tcg_out_label(s, over, s->code_ptr);
@@ -1429,7 +1429,7 @@ static int guest_base_flags;
 static inline void setup_guest_base_seg(void)
 {
     if (arch_prctl(ARCH_SET_GS, guest_base) == 0) {
-        guest_base_flags = P_GS;
+        s->guest_base_flags = P_GS;
     }
 }
 #else
@@ -1468,7 +1468,7 @@ static void tcg_out_qemu_ld_direct(TCGContext *s, TCGReg datalo, TCGReg datahi,
         break;
     case MO_SW:
         if (real_bswap) {
-            if (have_movbe) {
+            if (s->have_movbe) {
                 tcg_out_modrm_sib_offset(s, OPC_MOVBE_GyMy + P_DATA16 + seg,
                                          datalo, base, index, 0, ofs);
             } else {
@@ -2313,7 +2313,7 @@ static void tcg_target_qemu_prologue(TCGContext *s)
 #if !defined(CONFIG_SOFTMMU)
     /* Try to set up a segment register to point to guest_base.  */
     if (guest_base) {
-        setup_guest_base_seg();
+        setup_guest_base_seg(s);
     }
 #endif
 }

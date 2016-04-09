@@ -232,7 +232,7 @@ static void tcg_out_label(TCGContext *s, TCGLabel *l, tcg_insn_unit *ptr)
     l->u.value_ptr = ptr;
 }
 
-TCGLabel *gen_new_label(void)
+int gen_new_label(TCGContext *s)
 {
     TCGContext *s = &tcg_ctx;
     TCGLabel *l = tcg_malloc(sizeof(TCGLabel));
@@ -735,8 +735,8 @@ void tcg_gen_callN(TCGContext *s, void *func, TCGArg ret,
             int is_64bit = sizemask & (1 << (i+1)*2);
             if (is_64bit) {
                 TCGv_i64 orig = MAKE_TCGV_I64(args[i]);
-                TCGv_i32 h = tcg_temp_new_i32();
-                TCGv_i32 l = tcg_temp_new_i32();
+                TCGv_i32 h = tcg_temp_new_i32(s);
+                TCGv_i32 l = tcg_temp_new_i32(s);
                 tcg_gen_extr_i64_i32(l, h, orig);
                 split_args[real_args++] = GET_TCGV_I32(h);
                 split_args[real_args++] = GET_TCGV_I32(l);
@@ -773,10 +773,10 @@ void tcg_gen_callN(TCGContext *s, void *func, TCGArg ret,
             /* The 32-bit ABI is going to return the 64-bit value in
                the %o0/%o1 register pair.  Prepare for this by using
                two return temporaries, and reassemble below.  */
-            retl = tcg_temp_new_i64();
-            reth = tcg_temp_new_i64();
-            s->gen_opparam_buf[pi++] = GET_TCGV_I64(reth);
-            s->gen_opparam_buf[pi++] = GET_TCGV_I64(retl);
+            retl = tcg_temp_new_i64(s);
+            reth = tcg_temp_new_i64(s);
+            *s->gen_opparam_ptr++ = GET_TCGV_I64(reth);
+            *s->gen_opparam_ptr++ = GET_TCGV_I64(retl);
             nb_rets = 2;
         } else {
             s->gen_opparam_buf[pi++] = ret;
@@ -865,10 +865,10 @@ void tcg_gen_callN(TCGContext *s, void *func, TCGArg ret,
     for (i = real_args = 0; i < orig_nargs; ++i) {
         int is_64bit = orig_sizemask & (1 << (i+1)*2);
         if (is_64bit) {
-            TCGv_i32 h = MAKE_TCGV_I32(args[real_args++]);
-            TCGv_i32 l = MAKE_TCGV_I32(args[real_args++]);
-            tcg_temp_free_i32(h);
-            tcg_temp_free_i32(l);
+            TCGv_i32 h = MAKE_TCGV_I32(s, args[real_args++]);
+            TCGv_i32 l = MAKE_TCGV_I32(s, args[real_args++]);
+            tcg_temp_free_i32(s, h);
+            tcg_temp_free_i32(s, l);
         } else {
             real_args++;
         }
@@ -877,16 +877,16 @@ void tcg_gen_callN(TCGContext *s, void *func, TCGArg ret,
         /* The 32-bit ABI returned two 32-bit pieces.  Re-assemble them.
            Note that describing these as TCGv_i64 eliminates an unnecessary
            zero-extension that tcg_gen_concat_i32_i64 would create.  */
-        tcg_gen_concat32_i64(MAKE_TCGV_I64(ret), retl, reth);
-        tcg_temp_free_i64(retl);
-        tcg_temp_free_i64(reth);
+        tcg_gen_concat32_i64(s, MAKE_TCGV_I64(s, ret), retl, reth);
+        tcg_temp_free_i64(s, retl);
+        tcg_temp_free_i64(s, reth);
     }
 #elif defined(TCG_TARGET_EXTEND_ARGS) && TCG_TARGET_REG_BITS == 64
     for (i = 0; i < nargs; ++i) {
         int is_64bit = sizemask & (1 << (i+1)*2);
         if (!is_64bit) {
-            TCGv_i64 temp = MAKE_TCGV_I64(args[i]);
-            tcg_temp_free_i64(temp);
+            TCGv_i64 temp = MAKE_TCGV_I64(s, args[i]);
+            tcg_temp_free_i64(s, temp);
         }
     }
 #endif /* TCG_TARGET_EXTEND_ARGS */
