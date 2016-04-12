@@ -16,8 +16,6 @@
 #include "qemu-common.h"
 #include "qemu/queue.h"
 
-#include "uc_priv.h"
-
 static void init_lists(struct uc_struct *uc)
 {
     int i;

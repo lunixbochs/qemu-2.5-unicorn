@@ -30,8 +30,6 @@
 #include "exec/helper-proto.h"
 #include "exec/helper-gen.h"
 
-#include "uc_priv.h"
-
 #define PREFIX_REPZ   0x01
 #define PREFIX_REPNZ  0x02
 #define PREFIX_LOCK   0x04

@@ -21,8 +21,6 @@
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
 
-#include "uc_priv.h"
-
 //#define DEBUG_GUEST_PHYS_REGION_ADD
 
 static void memory_mapping_list_add_mapping_sorted(MemoryMappingList *list,

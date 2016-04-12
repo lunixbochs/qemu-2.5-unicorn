@@ -20,7 +20,6 @@
 
 #include "qemu-common.h"
 #include "qemu/log.h"
-#include "uc_priv.h"
 
 bool cpu_exists(struct uc_struct* uc, int64_t id)
 {

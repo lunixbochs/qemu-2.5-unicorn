@@ -20,7 +20,7 @@ QEMU_CXXFLAGS = -D__STDC_LIMIT_MACROS $(filter-out -Wstrict-prototypes -Wmissing
 QEMU_DGFLAGS += -MMD -MP -MT $@ -MF $(@D)/$(*F).d
 
 # Same as -I$(SRC_PATH) -I., but for the nested source/object directories
-QEMU_INCLUDES += -I$(<D) -I$(@D)
+QEMU_INCLUDES += -I$(<D) -I$(@D) -I$(SRC_PATH)/../include
 
 WL_U := -Wl,-u,
 find-symbols = $(if $1, $(sort $(shell $(NM) -P -g $1 | $2)))

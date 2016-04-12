@@ -20,8 +20,6 @@
 #include "tcg.h"
 #include "sysemu/sysemu.h"
 
-#include "uc_priv.h"
-
 static tcg_target_ulong cpu_tb_exec(CPUState *cpu, uint8_t *tb_ptr);
 static TranslationBlock *tb_find_slow(CPUArchState *env, target_ulong pc,
         target_ulong cs_base, uint64_t flags);

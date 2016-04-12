@@ -29,8 +29,6 @@
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
 
-#include "uc_priv.h"
-
 typedef struct MemoryRegionPortioList {
     MemoryRegion mr;
     void *portio_opaque;

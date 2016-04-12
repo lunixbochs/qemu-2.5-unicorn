@@ -23,7 +23,6 @@
 #include <signal.h>
 #include <setjmp.h>
 #include "hw/qdev-core.h"
-#include "disas/bfd.h"
 #include "exec/hwaddr.h"
 #include "exec/memattrs.h"
 #include "qemu/queue.h"
@@ -161,8 +160,6 @@ typedef struct CPUClass {
     void (*cpu_exec_enter)(CPUState *cpu);
     void (*cpu_exec_exit)(CPUState *cpu);
     bool (*cpu_exec_interrupt)(CPUState *cpu, int interrupt_request);
-
-    void (*disas_set_info)(CPUState *cpu, disassemble_info *info);
 } CPUClass;
 
 #ifdef HOST_WORDS_BIGENDIAN
@@ -259,7 +256,6 @@ struct CPUState {
     bool created;
     bool stop;
     bool stopped;
-    bool crash_occurred;
     bool exit_request;
     uint32_t interrupt_request;
     int singlestep_enabled;
@@ -316,6 +312,7 @@ struct CPUState {
        (absolute value) offset as small as possible.  This reduces code
        size, especially for hosts without large memory offsets.  */
     uint32_t tcg_exit_req;
+    struct uc_struct *uc;
 };
 
 QTAILQ_HEAD(CPUTailQ, CPUState);
@@ -647,7 +644,7 @@ static inline void cpu_unaligned_access(CPUState *cpu, vaddr addr,
  */
 static inline void cpu_set_pc(CPUState *cpu, vaddr addr)
 {
-    CPUClass *cc = CPU_GET_CLASS(cpu);
+    CPUClass *cc = CPU_GET_CLASS(cpu->uc, cpu);
 
     cc->set_pc(cpu, addr);
 }

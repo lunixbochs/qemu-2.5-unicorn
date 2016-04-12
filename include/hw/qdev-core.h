@@ -274,7 +274,6 @@ DeviceState *qdev_try_create(BusState *bus, const char *name);
 void qdev_init_nofail(DeviceState *dev);
 void qdev_set_legacy_instance_id(DeviceState *dev, int alias_id,
                                  int required_for_version);
-HotplugHandler *qdev_get_hotplug_handler(DeviceState *dev);
 void qdev_unplug(DeviceState *dev, Error **errp);
 void qdev_machine_creation_done(void);
 bool qdev_machine_modified(void);
@@ -387,12 +386,8 @@ void qbus_set_hotplug_handler(BusState *bus, DeviceState *handler,
 
 void qbus_set_bus_hotplug_handler(BusState *bus, Error **errp);
 
-static inline bool qbus_is_hotpluggable(BusState *bus)
-{
-   return bus->hotplug_handler;
-}
+void qdev_register_types(struct uc_struct *uc);
 
-void device_listener_register(DeviceListener *listener);
-void device_listener_unregister(DeviceListener *listener);
+void sysbus_register_types(struct uc_struct *uc);
 
 #endif

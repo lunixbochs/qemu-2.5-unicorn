@@ -41,7 +41,6 @@
 #include <qemu.h>
 #endif
 #include "exec/cpu-all.h"
-#include "qemu/main-loop.h"
 #include "translate-all.h"
 #include "sysemu/replay.h"
 
@@ -49,7 +48,6 @@
 #include "exec/ram_addr.h"
 
 #include "qemu/range.h"
-#include "uc_priv.h"
 
 #ifndef _WIN32
 #include "qemu/mmap-alloc.h"

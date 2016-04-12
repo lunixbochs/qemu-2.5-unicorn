@@ -22,7 +22,6 @@
  * THE SOFTWARE.
  */
 
-#include "qemu/main-loop.h"
 #include "qemu/timer.h"
 #include "sysemu/replay.h"
 #include "sysemu/sysemu.h"
@@ -38,8 +37,6 @@
 #ifdef CONFIG_PRCTL_PR_SET_TIMERSLACK
 #include <sys/prctl.h>
 #endif
-
-#include "uc_priv.h"
 
 /***********************************************************/
 /* timers */

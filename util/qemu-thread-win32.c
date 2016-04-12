@@ -17,8 +17,6 @@
 #include <assert.h>
 #include <limits.h>
 
-#include "uc_priv.h"
-
 
 static void error_exit(int err, const char *msg)
 {

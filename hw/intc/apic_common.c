@@ -21,8 +21,6 @@
 #include "hw/i386/apic_internal.h"
 #include "hw/qdev.h"
 
-#include "uc_priv.h"
-
 
 void cpu_set_apic_base(struct uc_struct *uc, DeviceState *dev, uint64_t val)
 {

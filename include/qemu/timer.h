@@ -1,6 +1,7 @@
 #ifndef QEMU_TIMER_H
 #define QEMU_TIMER_H
 
+#include <glib.h>
 #include "qemu/typedefs.h"
 #include "qemu-common.h"
 #include "qemu/notify.h"
@@ -172,16 +173,6 @@ bool qemu_clock_use_for_deadline(QEMUClockType type);
  * Returns: time until expiry in nanoseconds or -1
  */
 int64_t qemu_clock_deadline_ns_all(QEMUClockType type);
-
-/**
- * qemu_clock_get_main_loop_timerlist:
- * @type: the clock type
- *
- * Return the default timer list assocatiated with a clock.
- *
- * Returns: the default timer list
- */
-QEMUTimerList *qemu_clock_get_main_loop_timerlist(QEMUClockType type);
 
 /**
  * qemu_clock_nofify:
@@ -441,10 +432,10 @@ void timer_init_tl(QEMUTimer *ts,
  * You need not call an explicit deinit call. Simply make
  * sure it is not on a list with timer_del.
  */
-static inline void timer_init(QEMUTimer *ts, QEMUClockType type, int scale,
+static inline void timer_init(QEMUTimer *ts, QEMUTimerList *timer_list, QEMUClockType type, int scale,
                               QEMUTimerCB *cb, void *opaque)
 {
-    timer_init_tl(ts, main_loop_tlg.tl[type], scale, cb, opaque);
+    timer_init_tl(ts, timer_list, scale, cb, opaque);
 }
 
 /**
@@ -459,10 +450,10 @@ static inline void timer_init(QEMUTimer *ts, QEMUClockType type, int scale,
  * You need not call an explicit deinit call. Simply make
  * sure it is not on a list with timer_del.
  */
-static inline void timer_init_ns(QEMUTimer *ts, QEMUClockType type,
+static inline void timer_init_ns(QEMUTimer *ts, QEMUTimerList *timer_list, QEMUClockType type,
                                  QEMUTimerCB *cb, void *opaque)
 {
-    timer_init(ts, type, SCALE_NS, cb, opaque);
+    timer_init(ts, timer_list, type, SCALE_NS, cb, opaque);
 }
 
 /**
@@ -477,10 +468,10 @@ static inline void timer_init_ns(QEMUTimer *ts, QEMUClockType type,
  * You need not call an explicit deinit call. Simply make
  * sure it is not on a list with timer_del.
  */
-static inline void timer_init_us(QEMUTimer *ts, QEMUClockType type,
+static inline void timer_init_us(QEMUTimer *ts, QEMUTimerList *timer_list, QEMUClockType type,
                                  QEMUTimerCB *cb, void *opaque)
 {
-    timer_init(ts, type, SCALE_US, cb, opaque);
+    timer_init(ts, timer_list, type, SCALE_US, cb, opaque);
 }
 
 /**
@@ -495,10 +486,10 @@ static inline void timer_init_us(QEMUTimer *ts, QEMUClockType type,
  * You need not call an explicit deinit call. Simply make
  * sure it is not on a list with timer_del.
  */
-static inline void timer_init_ms(QEMUTimer *ts, QEMUClockType type,
+static inline void timer_init_ms(QEMUTimer *ts, QEMUTimerList *timer_list, QEMUClockType type,
                                  QEMUTimerCB *cb, void *opaque)
 {
-    timer_init(ts, type, SCALE_MS, cb, opaque);
+    timer_init(ts, timer_list, type, SCALE_MS, cb, opaque);
 }
 
 /**
@@ -538,10 +529,10 @@ static inline QEMUTimer *timer_new_tl(QEMUTimerList *timer_list,
  *
  * Returns: a pointer to the timer
  */
-static inline QEMUTimer *timer_new(QEMUClockType type, int scale,
+static inline QEMUTimer *timer_new(QEMUTimerList *timer_list, QEMUClockType type, int scale,
                                    QEMUTimerCB *cb, void *opaque)
 {
-    return timer_new_tl(main_loop_tlg.tl[type], scale, cb, opaque);
+    return timer_new_tl(timer_list, scale, cb, opaque);
 }
 
 /**
@@ -555,10 +546,10 @@ static inline QEMUTimer *timer_new(QEMUClockType type, int scale,
  *
  * Returns: a pointer to the newly created timer
  */
-static inline QEMUTimer *timer_new_ns(QEMUClockType type, QEMUTimerCB *cb,
+static inline QEMUTimer *timer_new_ns(QEMUTimerList *timer_list, QEMUClockType type, QEMUTimerCB *cb,
                                       void *opaque)
 {
-    return timer_new(type, SCALE_NS, cb, opaque);
+    return timer_new(timer_list, type, SCALE_NS, cb, opaque);
 }
 
 /**
@@ -572,10 +563,10 @@ static inline QEMUTimer *timer_new_ns(QEMUClockType type, QEMUTimerCB *cb,
  *
  * Returns: a pointer to the newly created timer
  */
-static inline QEMUTimer *timer_new_us(QEMUClockType type, QEMUTimerCB *cb,
+static inline QEMUTimer *timer_new_us(QEMUTimerList *timer_list, QEMUClockType type, QEMUTimerCB *cb,
                                       void *opaque)
 {
-    return timer_new(type, SCALE_US, cb, opaque);
+    return timer_new(timer_list, type, SCALE_US, cb, opaque);
 }
 
 /**
@@ -589,10 +580,10 @@ static inline QEMUTimer *timer_new_us(QEMUClockType type, QEMUTimerCB *cb,
  *
  * Returns: a pointer to the newly created timer
  */
-static inline QEMUTimer *timer_new_ms(QEMUClockType type, QEMUTimerCB *cb,
+static inline QEMUTimer *timer_new_ms(QEMUTimerList *timer_list, QEMUClockType type, QEMUTimerCB *cb,
                                       void *opaque)
 {
-    return timer_new(type, SCALE_MS, cb, opaque);
+    return timer_new(timer_list, type, SCALE_MS, cb, opaque);
 }
 
 /**

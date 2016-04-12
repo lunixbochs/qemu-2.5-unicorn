@@ -32,8 +32,6 @@
 #include "exec/ram_addr.h"
 #include "tcg/tcg.h"
 
-#include "uc_priv.h"
-
 //#define DEBUG_TLB
 //#define DEBUG_TLB_CHECK
 

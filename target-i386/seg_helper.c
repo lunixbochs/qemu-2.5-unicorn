@@ -22,7 +22,6 @@
 #include "qemu/log.h"
 #include "exec/helper-proto.h"
 #include "exec/cpu_ldst.h"
-#include "uc_priv.h"
 
 //#define DEBUG_PCALL
 

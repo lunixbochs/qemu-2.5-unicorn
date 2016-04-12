@@ -21,6 +21,8 @@
 #ifndef QCRYPTO_HASH_H__
 #define QCRYPTO_HASH_H__
 
+#include <sys/uio.h>
+
 #include "qemu-common.h"
 #include "qapi/error.h"
 

@@ -27,8 +27,6 @@
 #include "qapi/qmp/qint.h"
 #include "qapi/qmp/qstring.h"
 
-#include "uc_priv.h"
-
 #define MAX_INTERFACES 32
 
 typedef struct InterfaceImpl InterfaceImpl;

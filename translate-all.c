@@ -63,8 +63,6 @@
 #include "qemu/bitmap.h"
 #include "qemu/timer.h"
 
-#include "uc_priv.h"
-
 //#define DEBUG_TB_INVALIDATE
 //#define DEBUG_FLUSH
 /* make various TB consistency checks */

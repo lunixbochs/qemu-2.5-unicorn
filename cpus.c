@@ -28,8 +28,6 @@
 #include "sysemu/sysemu.h"
 #include "sysemu/cpus.h"
 
-#include "uc_priv.h"
-
 static bool cpu_can_run(CPUState *cpu);
 static bool tcg_exec_all(struct uc_struct *uc);
 static int qemu_tcg_init_vcpu(CPUState *cpu);

@@ -28,8 +28,6 @@
 #include "hw/boards.h"  // MachineClass
 #include "sysemu/sysemu.h"
 #include "sysemu/cpus.h"
-#include "vl.h"
-#include "uc_priv.h"
 
 #define DEFAULT_RAM_SIZE 128
 

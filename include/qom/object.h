@@ -526,8 +526,8 @@ struct TypeInfo
  * typically wrapped by each type to perform type safe casts of a class to a
  * specific class type.
  */
-#define OBJECT_CLASS_CHECK(class_type, class, name) \
-    ((class_type *)object_class_dynamic_cast_assert(OBJECT_CLASS(class), (name), \
+#define OBJECT_CLASS_CHECK(uc, class_type, class, name) \
+    ((class_type *)object_class_dynamic_cast_assert(uc, OBJECT_CLASS(class), (name), \
                                                __FILE__, __LINE__, __func__))
 
 /**
